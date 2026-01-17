@@ -62,6 +62,13 @@ Key characteristics:
 - Protocol: Binary (USB HID over TCP/IP)
 - Keep-alive: 5 second timeout
 
+## Crates
+
+This workspace contains two crates:
+
+- **`streamdeck-rs-tcp-core`**: no-std compatible core library for protocol parsing/encoding
+- **`streamdeck-rs-tcp`**: Full-featured async TCP library (depends on core)
+
 ## License
 
 MIT License - see LICENSE file for details
