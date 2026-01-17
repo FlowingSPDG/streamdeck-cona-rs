@@ -14,7 +14,7 @@ repository = "https://github.com/FlowingSPDG/streamdeck-rs-tcp"
 heapless = "0.8"
 
 # Std dependencies
-tokio = { version = "1", features = ["net", "io-util", "sync", "time", "macros", "rt", "signal"] }
+tokio = { version = "1", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal"] }
 bytes = "1"
 image = "0.24"
 thiserror = { version = "1", default-features = false }

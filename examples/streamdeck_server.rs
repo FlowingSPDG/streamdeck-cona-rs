@@ -33,7 +33,7 @@ impl Default for DeviceState {
 async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Result<(), Box<dyn std::error::Error>> {
     let (mut reader, mut writer) = stream.into_split();
     let mut buffer = [0u8; PACKET_SIZE];
-    let mut last_data_time = std::time::Instant::now();
+    let mut _last_data_time = std::time::Instant::now();
 
     println!("[Server] Client connected");
 
@@ -41,7 +41,7 @@ async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Re
         // Read packet
         match tokio::time::timeout(std::time::Duration::from_secs(10), reader.read_exact(&mut buffer)).await {
             Ok(Ok(_)) => {
-                last_data_time = std::time::Instant::now();
+                _last_data_time = std::time::Instant::now();
             }
             Ok(Err(e)) => {
                 eprintln!("[Server] Read error: {}", e);
@@ -54,7 +54,7 @@ async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Re
         }
 
         // Check if timeout exceeded
-        if last_data_time.elapsed() > std::time::Duration::from_secs(5) {
+        if _last_data_time.elapsed() > std::time::Duration::from_secs(5) {
             eprintln!("[Server] Client timeout");
             break;
         }
@@ -141,7 +141,7 @@ async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Re
                 let height = u16::from_le_bytes([buffer[8], buffer[9]]);
                 let is_last_page = buffer[10] == 0x01;
                 let page_num = u16::from_le_bytes([buffer[11], buffer[12]]);
-                let data_len = u16::from_le_bytes([buffer[13], buffer[14]]) as usize;
+                let _data_len = u16::from_le_bytes([buffer[13], buffer[14]]) as usize;
 
                 if is_last_page {
                     println!("[Server] Display area image at ({},{}) size {}x{} (page {})", 
