@@ -3,11 +3,11 @@
 [![crates.io](https://img.shields.io/crates/v/streamdeck-rs-tcp.svg)](https://crates.io/crates/streamdeck-rs-tcp)
 [![docs.rs](https://docs.rs/streamdeck-rs-tcp/badge.svg)](https://docs.rs/streamdeck-rs-tcp)
 
-Rust library for communicating with Elgato Stream Deck Studio devices via TCP/IP protocol.
+Rust library for communicating with Elgato Stream Deck Studio devices via TCP/IP protocol using the **Cora protocol**.
 
 ## Overview
 
-This library provides a Rust implementation for controlling Elgato Stream Deck Studio devices over the network. The Stream Deck Studio uses a fixed 1024-byte binary protocol over TCP port 5343, which is essentially the USB HID protocol implemented over TCP/IP.
+This library provides a Rust implementation for controlling Elgato Stream Deck Studio devices over the network using the **Cora protocol**. The Cora protocol is a modern TCP/IP protocol that uses a 16-byte header with variable-length payloads over TCP port 5343.
 
 ## Features
 
@@ -59,12 +59,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Protocol
 
-This library implements the TCP protocol for Stream Deck Studio as documented in `TCP_RAW_PANEL_PROTOCOL.md`.
+This library implements the **Cora protocol** for Stream Deck Studio/Plus as documented in `StreamDeck-Studio-Plus-TCP-Protocol.md`.
+
+Previously, there was a Legacy protocol, but this library supports only the modern Cora protocol.
 
 Key characteristics:
-- Port: 5343
-- Packet size: 1024 bytes (fixed)
-- Protocol: Binary (USB HID over TCP/IP)
+- Port: 5343 (default)
+- Protocol: Cora (16-byte header + variable payload)
+- Magic bytes: `[0x43, 0x93, 0x8a, 0x41]`
 - Keep-alive: 5 second timeout
 
 ## Crates
