@@ -11,7 +11,7 @@ keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
 categories = ["hardware-support", "network-programming", "asynchronous"]
 
 [dependencies]
-streamdeck-rs-tcp-core = { path = "../streamdeck-rs-tcp-core" }
+streamdeck-rs-tcp-core = { path = "../streamdeck-rs-tcp-core", features = ["alloc"] }
 tokio = { workspace = true }
 bytes = { workspace = true }
 image = { workspace = true }
