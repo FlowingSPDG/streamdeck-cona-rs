@@ -98,19 +98,46 @@ impl TcpConnection {
     }
 
     /// Read a 1024-byte packet
+    /// 
+    /// This method reads up to 1024 bytes. If fewer bytes are received,
+    /// the remaining bytes are zero-padded (matching Go implementation behavior).
+    /// Go uses conn.Read() which can read partial data, so we do the same.
     pub async fn read_packet(&self) -> Result<[u8; PACKET_SIZE]> {
         let mut stream = self.stream.write().await;
         let mut packet = [0u8; PACKET_SIZE];
 
-        // Always read exactly 1024 bytes
-        stream
-            .read_exact(&mut packet)
-            .await
-            .map_err(|e| Error::Io(e))?;
+        // Read as much as we can (up to 1024 bytes)
+        // Go implementation uses conn.Read() which can read partial data
+        let n = stream.read(&mut packet).await.map_err(|e| {
+            log::error!("Read error: {} (kind: {:?})", e, e.kind());
+            Error::Io(e)
+        })?;
+
+        // If we got 0 bytes, it's an EOF
+        if n == 0 {
+            return Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Connection closed by peer (0 bytes received)"
+            )));
+        }
+
+        // Log if we received partial data (for debugging 0x43 0x93 issue)
+        if n > 0 && n < PACKET_SIZE {
+            log::debug!(
+                "Received partial packet: {} bytes (expected 1024). First bytes: {:02x} {:02x}",
+                n,
+                packet[0],
+                if n > 1 { packet[1] } else { 0 }
+            );
+            if n >= 2 {
+                log::debug!("First 2 bytes of partial packet: 0x{:02x} 0x{:02x}", packet[0], packet[1]);
+            }
+        }
 
         // Update last data time
         *self.last_data_time.write().await = Instant::now();
 
+        // Note: packet buffer is already zero-initialized, so partial reads are padded with zeros
         Ok(packet)
     }
 

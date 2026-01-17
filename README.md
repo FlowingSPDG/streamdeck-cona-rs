@@ -1,5 +1,8 @@
 # streamdeck-rs-tcp
 
+[![crates.io](https://img.shields.io/crates/v/streamdeck-rs-tcp.svg)](https://crates.io/crates/streamdeck-rs-tcp)
+[![docs.rs](https://docs.rs/streamdeck-rs-tcp/badge.svg)](https://docs.rs/streamdeck-rs-tcp)
+
 Rust library for communicating with Elgato Stream Deck Studio devices via TCP/IP protocol.
 
 ## Overview
@@ -28,6 +31,8 @@ tokio = { version = "1", features = ["full"] }
 
 ## Example
 
+See `examples/simple_client.rs` for a complete example:
+
 ```rust
 use streamdeck_rs_tcp::Device;
 
@@ -36,17 +41,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to Stream Deck Studio
     let device = Device::connect_tcp("192.168.1.100:5343").await?;
     
-    // Set brightness
+    // Get and print serial number
+    if let Some(serial) = device.serial_number().await {
+        println!("Connected to device with serial: {}", serial);
+    }
+    
+    // Set brightness to 80%
     device.set_brightness(80).await?;
     
     // Set button image
     let image_data = include_bytes!("image.jpg");
     device.set_button_image(5, image_data.to_vec()).await?;
-    
-    // Handle events
-    device.on_button_press(|index| {
-        println!("Button {} pressed", index);
-    }).await?;
     
     Ok(())
 }
@@ -68,6 +73,11 @@ This workspace contains two crates:
 
 - **`streamdeck-rs-tcp-core`**: no-std compatible core library for protocol parsing/encoding
 - **`streamdeck-rs-tcp`**: Full-featured async TCP library (depends on core)
+
+## Useful Links
+
+- [SKAARHOJ Wiki - Stream Deck on Raw Panel](https://wiki.skaarhoj.com/books/raw-panel/page/stream-deck-on-raw-panel) - Comprehensive documentation about Stream Deck Studio protocol and usage
+- [YouTube Video](https://www.youtube.com/watch?v=lrTc9Ogmh8s) - Video demonstration of Stream Deck integration
 
 ## License
 
