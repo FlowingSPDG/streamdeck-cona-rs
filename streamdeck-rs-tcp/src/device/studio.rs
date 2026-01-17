@@ -238,15 +238,21 @@ impl Device {
         let event_loop_connection = Arc::clone(&connection);
         tokio::spawn(async move {
             loop {
-                match event_loop_connection.read().await.read_packet().await {
-                    Ok(packet) => {
+                // Use read_cora_message directly to properly handle keep-alive
+                match event_loop_connection.read().await.read_cora_message().await {
+                    Ok(message) => {
                         // Check if this is a keep-alive request
-                        if packet[0] == 0x01 && packet[1] == 0x0a {
+                        if message.is_keep_alive() {
                             if let Err(e) = event_loop_connection.read().await.handle_keep_alive().await {
                                 log::error!("Failed to send keep-alive response: {}", e);
                             }
                             continue;
                         }
+
+                        // Convert Cora message to Legacy packet format for event decoder
+                        let mut packet = [0u8; 1024];
+                        let len = message.payload.len().min(1024);
+                        packet[..len].copy_from_slice(&message.payload[..len]);
 
                         // Decode event
                         match EventDecoder::decode(&packet) {
@@ -265,7 +271,7 @@ impl Device {
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to read packet: {}", e);
+                        log::error!("Failed to read message: {}", e);
                         // Exit loop on error
                         break;
                     }
