@@ -1,0 +1,48 @@
+[package]
+name = "streamdeck-rs-tcp"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust library for controlling Elgato Stream Deck Studio via TCP protocol"
+readme = "../README.md"
+keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
+categories = ["hardware-support", "network-programming", "asynchronous"]
+
+[dependencies]
+streamdeck-rs-tcp-core = { path = "../streamdeck-rs-tcp-core" }
+tokio = { workspace = true }
+bytes = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+env_logger = { workspace = true }
+
+[lib]
+name = "streamdeck_rs_tcp"
+path = "../src/lib.rs"
+
+[[example]]
+name = "simple_client"
+path = "../examples/simple_client.rs"
+
+[[example]]
+name = "image_display"
+path = "../examples/image_display.rs"
+
+[[example]]
+name = "event_handler"
+path = "../examples/event_handler.rs"
+
+[[example]]
+name = "streamdeck_client"
+path = "../examples/streamdeck_client.rs"
+
+[[example]]
+name = "streamdeck_server"
+path = "../examples/streamdeck_server.rs"
