@@ -7,11 +7,14 @@ license.workspace = true
 repository.workspace = true
 description = "Rust library for controlling Elgato Stream Deck Studio via TCP protocol"
 readme = "../README.md"
+license-file = "../LICENSE"
 keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
 categories = ["hardware-support", "network-programming", "asynchronous"]
 
 [dependencies]
-streamdeck-rs-tcp-core = { path = "../streamdeck-rs-tcp-core", features = ["alloc"] }
+# Development: uses path dependency
+# Publishing: cargo publish will use version from crates.io (core must be published first)
+streamdeck-rs-tcp-core = { version = "0.1.0", path = "../streamdeck-rs-tcp-core", features = ["alloc"] }
 tokio = { workspace = true }
 bytes = { workspace = true }
 image = { workspace = true }
@@ -25,24 +28,24 @@ env_logger = { workspace = true }
 
 [lib]
 name = "streamdeck_rs_tcp"
-path = "../src/lib.rs"
+path = "src/lib.rs"
 
 [[example]]
 name = "simple_client"
-path = "../examples/simple_client.rs"
+path = "examples/simple_client.rs"
 
 [[example]]
 name = "image_display"
-path = "../examples/image_display.rs"
+path = "examples/image_display.rs"
 
 [[example]]
 name = "event_handler"
-path = "../examples/event_handler.rs"
+path = "examples/event_handler.rs"
 
 [[example]]
 name = "streamdeck_client"
-path = "../examples/streamdeck_client.rs"
+path = "examples/streamdeck_client.rs"
 
 [[example]]
 name = "streamdeck_server"
-path = "../examples/streamdeck_server.rs"
+path = "examples/streamdeck_server.rs"
