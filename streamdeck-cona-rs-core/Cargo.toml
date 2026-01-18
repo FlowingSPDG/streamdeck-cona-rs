@@ -1,0 +1,23 @@
+[package]
+name = "streamdeck-cona-rs-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "no-std compatible core library for Stream Deck Studio TCP protocol"
+readme = "README.md"
+keywords = ["streamdeck", "elgato", "tcp", "no-std", "embedded"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[lib]
+name = "streamdeck_cona_rs_core"
+path = "src/lib.rs"
+
+[features]
+default = ["alloc"]
+alloc = []
+std = ["alloc"]
+
+[dependencies]
+heapless = { workspace = true, optional = true }

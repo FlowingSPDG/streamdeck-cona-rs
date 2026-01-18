@@ -1,0 +1,50 @@
+[package]
+name = "streamdeck-cona-rs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust library for controlling Elgato Stream Deck Studio via TCP protocol"
+readme = "README.md"
+keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
+categories = ["hardware-support", "network-programming", "asynchronous"]
+
+[dependencies]
+# Development: uses path dependency
+# Publishing: cargo publish will use version from crates.io (core must be published first)
+streamdeck-cona-rs-core = { version = "0.1.0", path = "../streamdeck-cona-rs-core", features = ["alloc"] }
+tokio = { workspace = true }
+bytes = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[lib]
+name = "streamdeck_cona_rs"
+path = "src/lib.rs"
+
+[[example]]
+name = "simple_client"
+path = "examples/simple_client.rs"
+
+[[bin]]
+name = "streamdeck-server"
+path = "src/bin/streamdeck-server.rs"
+
+[[bin]]
+name = "networkdock-server"
+path = "src/bin/networkdock-server.rs"
+
+[[bin]]
+name = "streamdeck-manager"
+path = "src/bin/streamdeck-manager.rs"
+
+[[bin]]
+name = "streamdeck-client"
+path = "src/bin/streamdeck-client.rs"

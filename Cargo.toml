@@ -1,0 +1,26 @@
+[workspace]
+members = ["streamdeck-cona-rs-core", "streamdeck-cona-rs"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Shugo Kawamura"]
+license = "MIT"
+repository = "https://github.com/FlowingSPDG/streamdeck-cona-rs"
+
+[workspace.dependencies]
+# Core dependencies (no-std compatible)
+heapless = "0.8"
+
+# Std dependencies
+tokio = { version = "1", features = ["net", "io-util", "io-std", "sync", "time", "macros", "rt", "rt-multi-thread", "signal"] }
+bytes = "1"
+image = "0.24"
+thiserror = { version = "1", default-features = false }
+async-trait = "0.1"
+log = "0.4"
+
+# Dev dependencies
+tokio-test = "0.4"
+env_logger = "0.11"
