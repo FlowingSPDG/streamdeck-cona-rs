@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 use streamdeck_rs_tcp::protocol::cora::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, CORA_HEADER_SIZE};
 
 const DEFAULT_PORT: u16 = 5343;
@@ -14,71 +14,139 @@ const DEFAULT_PORT: u16 = 5343;
 #[derive(Debug, Clone)]
 struct DeviceState {
     serial_number: String,
+    firmware_version: String,
     brightness: u8,
     button_images: [Option<Vec<u8>>; 32],
     encoder_colors: [(u8, u8, u8); 2],
+    device2_connected: bool, // Device 2 (Child Device) connection state
 }
 
 impl Default for DeviceState {
     fn default() -> Self {
         Self {
             serial_number: "EMULATOR123456".to_string(),
+            firmware_version: "1.05.008".to_string(),
             brightness: 100,
             button_images: Default::default(),
             encoder_colors: [(0, 0, 0), (0, 0, 0)],
+            device2_connected: false, // Device 2 starts disconnected
         }
     }
 }
 
-async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Result<(), Box<dyn std::error::Error>> {
-    let (mut reader, mut writer) = stream.into_split();
-    let mut receive_buffer = Vec::new();
-    let mut _last_data_time = std::time::Instant::now();
-    let mut next_message_id = 0u32;
-    let mut connection_no = 0u8;
-
-    println!("[Server] Client connected");
-
-    // Send initial keep-alive packet (device sends this first)
+/// Send keep-alive packet to client
+async fn send_keep_alive(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    next_message_id: &Arc<Mutex<u32>>,
+    connection_no: &Arc<Mutex<u8>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut msg_id = next_message_id.lock().await;
+    let conn_no = *connection_no.lock().await;
+    
     let keep_alive_payload = {
         let mut payload = vec![0u8; 32];
         payload[0] = 0x01;
         payload[1] = 0x0a;
-        payload[5] = connection_no;
+        payload[5] = conn_no;
         payload
     };
 
     let keep_alive_message = CoraMessage::new(
         CoraMessageFlags::None,
         CoraHidOp::SendReport,
-        next_message_id,
+        *msg_id,
         keep_alive_payload,
     );
-    next_message_id += 1;
+    *msg_id += 1;
 
     let keep_alive_data = keep_alive_message.encode();
     writer.write_all(&keep_alive_data).await?;
+    
+    Ok(())
+}
+
+async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut reader, mut writer) = stream.into_split();
+    let mut receive_buffer = Vec::new();
+    let mut _last_data_time = std::time::Instant::now();
+    let next_message_id = Arc::new(Mutex::new(0u32));
+    let connection_no = Arc::new(Mutex::new(0u8));
+
+    println!("[Server] Client connected");
+
+    // Wrap writer in Arc<Mutex<>> for sharing across tasks
+    let writer_shared = Arc::new(Mutex::new(writer));
+    
+    // Send initial keep-alive packet (device sends this first)
+    {
+        let mut writer_guard = writer_shared.lock().await;
+        send_keep_alive(&mut *writer_guard, &next_message_id, &connection_no).await?;
+    }
     println!("[Server] Sent initial keep-alive");
 
+    // Simulate Device 2 connection after a short delay (1 second)
+    // In a real device, this would be triggered by actual hardware connection
+    let writer_clone = writer_shared.clone();
+    let next_message_id_clone = next_message_id.clone();
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        
+        // Connect Device 2
+        {
+            let mut device_state = state_clone.write().await;
+            if !device_state.device2_connected {
+                device_state.device2_connected = true;
+                drop(device_state);
+                
+                // Send Device 2 plug event: connected
+                let mut writer_guard = writer_clone.lock().await;
+                if let Err(e) = send_device2_plug_event(&mut *writer_guard, &next_message_id_clone, true).await {
+                    eprintln!("[Server] Error sending Device 2 plug event: {}", e);
+                }
+            }
+        }
+    });
+
+    // Create interval for periodic keep-alive (4 seconds)
+    let mut keep_alive_interval = tokio::time::interval(std::time::Duration::from_secs(4));
+    keep_alive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the first tick (immediate execution) since we already sent initial keep-alive
+    keep_alive_interval.tick().await;
+
+    let mut read_chunk = vec![0u8; 4096];
+    
     loop {
-        // Read Cora message
-        let mut chunk = vec![0u8; 4096];
-        match tokio::time::timeout(std::time::Duration::from_secs(10), reader.read(&mut chunk)).await {
-            Ok(Ok(0)) => {
-                println!("[Server] Client disconnected");
-                break;
+        tokio::select! {
+            // Handle periodic keep-alive
+            _ = keep_alive_interval.tick() => {
+                let mut writer_guard = writer_shared.lock().await;
+                if let Err(e) = send_keep_alive(&mut *writer_guard, &next_message_id, &connection_no).await {
+                    eprintln!("[Server] Error sending keep-alive: {}", e);
+                    break;
+                }
             }
-            Ok(Ok(n)) => {
-                _last_data_time = std::time::Instant::now();
-                receive_buffer.extend_from_slice(&chunk[..n]);
-            }
-            Ok(Err(e)) => {
-                eprintln!("[Server] Read error: {}", e);
-                break;
-            }
-            Err(_) => {
-                eprintln!("[Server] Read timeout");
-                break;
+
+            // Read Cora message
+            result = tokio::time::timeout(std::time::Duration::from_secs(10), reader.read(&mut read_chunk)) => {
+                match result {
+                    Ok(Ok(0)) => {
+                        println!("[Server] Client disconnected");
+                        break;
+                    }
+                    Ok(Ok(n)) => {
+                        _last_data_time = std::time::Instant::now();
+                        receive_buffer.extend_from_slice(&read_chunk[..n]);
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("[Server] Read error: {}", e);
+                        break;
+                    }
+                    Err(_) => {
+                        // Read timeout - continue to check for keep-alive
+                        continue;
+                    }
+                }
             }
         }
 
@@ -130,8 +198,12 @@ async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Re
                     receive_buffer.drain(..CORA_HEADER_SIZE + payload_length);
 
                     // Handle message
-                    if let Err(e) = handle_message(&message, &mut writer, &state, &mut next_message_id, &mut connection_no).await {
-                        eprintln!("[Server] Error handling message: {}", e);
+                    {
+                        let mut writer_guard = writer_shared.lock().await;
+                        if let Err(e) = handle_message(&message, &mut *writer_guard, &state, &next_message_id, &connection_no).await {
+                            eprintln!("[Server] Error handling message: {} (continuing)", e);
+                            // Continue processing even if one message fails
+                        }
                     }
                 }
                 Err(e) => {
@@ -151,48 +223,233 @@ async fn handle_client(stream: TcpStream, state: Arc<RwLock<DeviceState>>) -> Re
     Ok(())
 }
 
+/// Extract report ID from GET_REPORT request payload
+/// Returns None if the payload is not a valid GET_REPORT request
+fn parse_get_report_request(payload: &[u8]) -> Option<u8> {
+    if payload.len() >= 2 && payload[0] == 0x03 {
+        Some(payload[1])
+    } else {
+        None
+    }
+}
+
+/// Build GET_REPORT response payload in standard format
+/// Format: [0x03, report_id, length_high, length_low, ...data...]
+/// Length field is Big Endian (unlike other fields which are Little Endian)
+fn build_get_report_response_payload(report_id: u8, data: &[u8]) -> Vec<u8> {
+    let len = data.len().min(65535) as u16;
+    let mut payload = Vec::with_capacity(4 + len as usize);
+    
+    payload.push(0x03);
+    payload.push(report_id);
+    payload.push(((len >> 8) & 0xff) as u8); // Big Endian high byte
+    payload.push((len & 0xff) as u8); // Big Endian low byte
+    payload.extend_from_slice(&data[..len as usize]);
+    
+    payload
+}
+
+/// Build Device 2 info response payload
+/// Based on device2Info.ts: parseDevice2Info structure
+/// Format: 128+ bytes with specific offsets for vendorId, productId, serial number, and TCP port
+/// If connected is true, returns device info. If false, returns payload indicating disconnected (offset 4 != 0x02)
+/// If for_plug_event is true, payload starts with 0x01 0x0b (for plug events), otherwise just the data (for GET_REPORT responses)
+fn build_device2_info_payload(connected: bool, for_plug_event: bool) -> Vec<u8> {
+    // Device 2 info is typically 128 bytes or more
+    // Based on device2Info.ts structure:
+    // - Offset 0-1: 0x01 0x0b (for plug events only)
+    // - Offset 4: Device status (0x02 = connected/OK, != 0x02 = disconnected)
+    // - Offset 26-27: vendorId (Little Endian, u16)
+    // - Offset 28-29: productId (Little Endian, u16)
+    // - Offset 94-125: Serial number (ASCII, up to 32 bytes)
+    // - Offset 126-127: TCP port (Little Endian, u16)
+    
+    let mut payload = vec![0u8; 128];
+    
+    // For plug events, payload starts with 0x01 0x0b
+    // For GET_REPORT responses, we don't include this prefix
+    if for_plug_event {
+        payload[0] = 0x01;
+        payload[1] = 0x0b;
+    }
+    
+    // Device status at offset 4 (0x02 = device connected, 0x00 = disconnected)
+    if connected {
+        payload[4] = 0x02;
+        
+        // Vendor ID at offset 26-27 (Little Endian)
+        // Elgato Systems GmbH vendor ID: 0x0fd9
+        let vendor_id: u16 = 0x0fd9;
+        payload[26] = (vendor_id & 0xff) as u8;
+        payload[27] = ((vendor_id >> 8) & 0xff) as u8;
+        
+        // Product ID at offset 28-29 (Little Endian)
+        // Stream Deck Studio product ID (example: 0x0088)
+        let product_id: u16 = 0x0088;
+        payload[28] = (product_id & 0xff) as u8;
+        payload[29] = ((product_id >> 8) & 0xff) as u8;
+        
+        // Serial number at offset 94-125 (ASCII, max 32 bytes)
+        // Using a placeholder serial number
+        let serial = b"DEVICE2_SERIAL_123456";
+        let serial_len = serial.len().min(32);
+        payload[94..94 + serial_len].copy_from_slice(&serial[..serial_len]);
+        
+        // TCP port at offset 126-127 (Little Endian)
+        // Using default port 5343
+        let tcp_port: u16 = 5343;
+        payload[126] = (tcp_port & 0xff) as u8;
+        payload[127] = ((tcp_port >> 8) & 0xff) as u8;
+    } else {
+        // Device disconnected - offset 4 remains 0x00
+        payload[4] = 0x00;
+    }
+    
+    payload
+}
+
+/// Send Device 2 plug event (0x01 0x0b) to client
+/// This notifies the client when Device 2 connects or disconnects
+async fn send_device2_plug_event(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    next_message_id: &Arc<Mutex<u32>>,
+    connected: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut msg_id = next_message_id.lock().await;
+    
+    // Build payload with 0x01 0x0b prefix for plug events
+    let payload = build_device2_info_payload(connected, true);
+    
+    let plug_event_message = CoraMessage::new(
+        CoraMessageFlags::None,
+        CoraHidOp::SendReport,
+        *msg_id,
+        payload,
+    );
+    *msg_id += 1;
+
+    let event_data = plug_event_message.encode();
+    writer.write_all(&event_data).await?;
+    
+    if connected {
+        println!("[Server] Sent Device 2 plug event: connected");
+    } else {
+        println!("[Server] Sent Device 2 plug event: disconnected");
+    }
+    
+    Ok(())
+}
+
+/// Get data for a specific report ID from device state
+async fn get_report_data(state: &Arc<RwLock<DeviceState>>, report_id: u8) -> Option<Vec<u8>> {
+    match report_id {
+        0x83 => {
+            // Firmware version
+            Some(state.read().await.firmware_version.as_bytes().to_vec())
+        }
+        0x84 => {
+            // Serial number
+            Some(state.read().await.serial_number.as_bytes().to_vec())
+        }
+        0x1c => {
+            // Device 2 (Child Device) information
+            // Returns structured data as per device2Info.ts
+            // For GET_REPORT responses, we don't include the 0x01 0x0b prefix
+            Some(build_device2_info_payload(state.read().await.device2_connected, false))
+        }
+        0x8f | 0x87 | 0x1a => {
+            // Unknown Report IDs - return empty data
+            // 0x1a: Keep-alive related (already handled separately, but may come as GET_REPORT)
+            // 0x8f, 0x87: Optional features or device-specific queries
+            Some(Vec::new())
+        }
+        _ => {
+            // Unknown Report ID - return None to indicate unsupported
+            None
+        }
+    }
+}
+
+/// Send GET_REPORT response
+async fn send_get_report_response(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    message_id: u32,
+    report_id: u8,
+    data: Vec<u8>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response_payload = build_get_report_response_payload(report_id, &data);
+    
+    let response = CoraMessage::new(
+        CoraMessageFlags::Result,
+        CoraHidOp::GetReport,
+        message_id,
+        response_payload,
+    );
+    
+    let response_data = response.encode();
+    writer.write_all(&response_data).await?;
+    
+    Ok(())
+}
+
 async fn handle_message(
     message: &CoraMessage,
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     state: &Arc<RwLock<DeviceState>>,
-    next_message_id: &mut u32,
-    connection_no: &mut u8,
+    _next_message_id: &Arc<Mutex<u32>>,
+    connection_no: &Arc<Mutex<u8>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Handle keep-alive ACK
     if message.flags == CoraMessageFlags::AckNak && message.payload.len() >= 3 && message.payload[0] == 0x03 && message.payload[1] == 0x1a {
         // Client responded to keep-alive
-        *connection_no = message.payload[2];
+        let mut conn_no = connection_no.lock().await;
+        *conn_no = message.payload[2];
         return Ok(());
+    }
+
+    // Handle GET_REPORT requests regardless of HID operation (0x03 0x83, 0x03 0x84, etc.)
+    // Some clients may send GET_REPORT requests with different HID operations
+    if let Some(report_id) = parse_get_report_request(&message.payload) {
+        if let Some(data) = get_report_data(state, report_id).await {
+            let report_name = match report_id {
+                0x83 => "Firmware version",
+                0x84 => "Serial number",
+                0x1c => "Device 2 (Child Device) info",
+                0x8f => "Report ID 0x8f",
+                0x87 => "Report ID 0x87",
+                0x1a => "Report ID 0x1a (Keep-alive related)",
+                _ => "Unknown Report ID",
+            };
+            
+            let data_len = data.len();
+            println!("[Server] {} request (Report ID: 0x{:02x}, HID op: {:?})", 
+                report_name, report_id, message.hid_op);
+            
+            send_get_report_response(writer, message.message_id, report_id, data).await?;
+            
+            if report_id == 0x83 {
+                println!("[Server] Sent firmware version: {}", 
+                    state.read().await.firmware_version);
+            } else if report_id == 0x84 {
+                println!("[Server] Sent serial: {}", 
+                    state.read().await.serial_number);
+            } else {
+                println!("[Server] Sent response for Report ID 0x{:02x} ({} bytes)", 
+                    report_id, data_len);
+            }
+            
+            return Ok(());
+        } else {
+            println!("[Server] Unsupported GET_REPORT request: Report ID 0x{:02x}", report_id);
+        }
     }
 
     // Handle commands based on HID operation
     match message.hid_op {
         CoraHidOp::GetReport => {
-            // Handle GET_REPORT requests
-            if message.payload.len() >= 2 && message.payload[0] == 0x03 && message.payload[1] == 0x84 {
-                // Serial number request
-                println!("[Server] Serial number request");
-                let serial = state.read().await.serial_number.clone();
-                let len = serial.len().min(65535) as u16;
-
-                let mut response_payload = vec![0u8; 4 + len as usize];
-                response_payload[0] = 0x03;
-                response_payload[1] = 0x84;
-                response_payload[2] = ((len >> 8) & 0xff) as u8; // Big Endian
-                response_payload[3] = (len & 0xff) as u8;
-                response_payload[4..4 + len as usize].copy_from_slice(serial.as_bytes());
-
-                let response = CoraMessage::new(
-                    CoraMessageFlags::Result,
-                    CoraHidOp::GetReport,
-                    message.message_id,
-                    response_payload,
-                );
-
-                let response_data = response.encode();
-                writer.write_all(&response_data).await?;
-                println!("[Server] Sent serial: {}", serial);
-            }
+            // GET_REPORT requests are already handled above (before the match statement)
+            // This is a fallback for any other GET_REPORT requests
+            println!("[Server] GET_REPORT request (already handled above or unknown): {:?}", message.payload);
         }
 
         CoraHidOp::SendReport => {
@@ -212,8 +469,14 @@ async fn handle_message(
                         *state.write().await = DeviceState::default();
                     }
 
-                    _ => {}
+                    _ => {
+                        println!("[Server] Unknown SEND_REPORT command: 0x{:02x} 0x{:02x}", 
+                            message.payload.get(0).copied().unwrap_or(0),
+                            message.payload.get(1).copied().unwrap_or(0));
+                    }
                 }
+            } else {
+                println!("[Server] SEND_REPORT command too short: {} bytes", message.payload.len());
             }
         }
 
