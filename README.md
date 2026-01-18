@@ -1,7 +1,7 @@
-# streamdeck-cona-rs
+# streamdeck-cora-rs
 
-[![crates.io](https://img.shields.io/crates/v/streamdeck-cona-rs.svg)](https://crates.io/crates/streamdeck-cona-rs)
-[![docs.rs](https://docs.rs/streamdeck-cona-rs/badge.svg)](https://docs.rs/streamdeck-cona-rs)
+[![crates.io](https://img.shields.io/crates/v/streamdeck-cora-rs.svg)](https://crates.io/crates/streamdeck-cora-rs)
+[![docs.rs](https://docs.rs/streamdeck-cora-rs/badge.svg)](https://docs.rs/streamdeck-cora-rs)
 
 Rust library for controlling Elgato Stream Deck Studio devices via TCP using the Cora protocol.
 
@@ -9,14 +9,14 @@ Rust library for controlling Elgato Stream Deck Studio devices via TCP using the
 
 This repository contains:
 
-- **`streamdeck-cona-rs-core`**: no-std compatible protocol parsing/encoding
-- **`streamdeck-cona-rs`**: Full async TCP library with binaries
+- **`streamdeck-cora-rs-core`**: no-std compatible protocol parsing/encoding
+- **`streamdeck-cora-rs`**: Full async TCP library with binaries
 
 
 See each crate's README for usage:
 
-- [streamdeck-cona-rs](streamdeck-cona-rs/README.md) - Main library
-- [streamdeck-cona-rs-core](streamdeck-cona-rs-core/README.md) - Core protocol library
+- [streamdeck-cora-rs](streamdeck-cora-rs/README.md) - Main library
+- [streamdeck-cora-rs-core](streamdeck-cora-rs-core/README.md) - Core protocol library
 
 ## Binaries
 
@@ -33,15 +33,15 @@ From workspace root:
 
 ```bash
 # Run streamdeck-manager
-cargo run -p streamdeck-cona-rs --bin streamdeck-manager
+cargo run -p streamdeck-cora-rs --bin streamdeck-manager
 
 # Run other binaries
-cargo run -p streamdeck-cona-rs --bin streamdeck-server
-cargo run -p streamdeck-cona-rs --bin networkdock-server
-cargo run -p streamdeck-cona-rs --bin streamdeck-client
+cargo run -p streamdeck-cora-rs --bin streamdeck-server
+cargo run -p streamdeck-cora-rs --bin networkdock-server
+cargo run -p streamdeck-cora-rs --bin streamdeck-client
 
 # Run examples
-cargo run -p streamdeck-cona-rs --example simple_client
+cargo run -p streamdeck-cora-rs --example simple_client
 ```
 
 ## Protocol

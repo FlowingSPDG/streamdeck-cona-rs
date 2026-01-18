@@ -1,5 +1,5 @@
 [package]
-name = "streamdeck-cona-rs-core"
+name = "streamdeck-cora-rs-core"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -11,7 +11,7 @@ keywords = ["streamdeck", "elgato", "tcp", "no-std", "embedded"]
 categories = ["embedded", "hardware-support", "no-std"]
 
 [lib]
-name = "streamdeck_cona_rs_core"
+name = "streamdeck_cora_rs_core"
 path = "src/lib.rs"
 
 [features]

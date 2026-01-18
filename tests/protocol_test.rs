@@ -1,8 +1,8 @@
 //! Protocol parsing and serialization tests
 
-use streamdeck_cona_rs::protocol::command::{Command, CommandEncoder};
-use streamdeck_cona_rs::protocol::event::{Event, EventDecoder};
-use streamdeck_cona_rs::protocol::packet::PACKET_SIZE;
+use streamdeck_cora_rs::protocol::command::{Command, CommandEncoder};
+use streamdeck_cora_rs::protocol::event::{Event, EventDecoder};
+use streamdeck_cora_rs::protocol::packet::PACKET_SIZE;
 
 #[test]
 fn test_brightness_command() {
