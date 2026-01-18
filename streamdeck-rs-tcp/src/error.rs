@@ -36,3 +36,13 @@ pub enum Error {
     #[error("Device error: {0}")]
     Device(String),
 }
+
+impl From<streamdeck_cona_rs_core::Error> for Error {
+    fn from(err: streamdeck_cona_rs_core::Error) -> Self {
+        match err {
+            streamdeck_cona_rs_core::Error::Protocol(msg) => Error::Protocol(msg.to_string()),
+            streamdeck_cona_rs_core::Error::InvalidParameter(msg) => Error::InvalidParameter(msg.to_string()),
+            streamdeck_cona_rs_core::Error::BufferTooSmall => Error::Protocol("Buffer too small".to_string()),
+        }
+    }
+}

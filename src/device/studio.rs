@@ -23,7 +23,7 @@ impl Device {
     ///
     /// # Example
     /// ```no_run
-    /// use streamdeck_rs_tcp::Device;
+    /// use streamdeck_cona_rs::Device;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let device = Device::connect_tcp("192.168.1.100:5343").await?;
@@ -75,7 +75,7 @@ impl Device {
     ///
     /// # Example
     /// ```no_run
-    /// # use streamdeck_rs_tcp::Device;
+    /// # use streamdeck_cona_rs::Device;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let device = Device::connect_tcp("192.168.1.100:5343").await?;
     /// let image_data = include_bytes!("button.jpg");

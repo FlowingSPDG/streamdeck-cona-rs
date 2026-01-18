@@ -1,5 +1,5 @@
 [workspace]
-members = ["streamdeck-rs-tcp-core", "streamdeck-rs-tcp"]
+members = ["streamdeck-cona-rs-core", "streamdeck-cona-rs"]
 resolver = "2"
 
 [workspace.package]
@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Shugo Kawamura"]
 license = "MIT"
-repository = "https://github.com/FlowingSPDG/streamdeck-rs-tcp"
+repository = "https://github.com/FlowingSPDG/streamdeck-cona-rs"
 
 [workspace.dependencies]
 # Core dependencies (no-std compatible)

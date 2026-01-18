@@ -1,5 +1,5 @@
 [package]
-name = "streamdeck-rs-tcp"
+name = "streamdeck-cona-rs"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -13,7 +13,7 @@ categories = ["hardware-support", "network-programming", "asynchronous"]
 [dependencies]
 # Development: uses path dependency
 # Publishing: cargo publish will use version from crates.io (core must be published first)
-streamdeck-rs-tcp-core = { version = "0.1.0", path = "../streamdeck-rs-tcp-core", features = ["alloc"] }
+streamdeck-cona-rs-core = { version = "0.1.0", path = "../streamdeck-cona-rs-core", features = ["alloc"] }
 tokio = { workspace = true }
 bytes = { workspace = true }
 image = { workspace = true }
@@ -26,7 +26,7 @@ tokio-test = { workspace = true }
 env_logger = { workspace = true }
 
 [lib]
-name = "streamdeck_rs_tcp"
+name = "streamdeck_cona_rs"
 path = "src/lib.rs"
 
 [[example]]

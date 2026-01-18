@@ -5,6 +5,9 @@
 
 use crate::error::{Error, Result};
 
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
 /// Cora protocol magic bytes
 pub const CORA_MAGIC: [u8; 4] = [0x43, 0x93, 0x8a, 0x41];
 
@@ -66,6 +69,7 @@ impl From<u8> for CoraHidOp {
 
 /// Cora protocol message structure
 #[derive(Debug, Clone)]
+#[cfg(feature = "alloc")]
 pub struct CoraMessage {
     pub flags: CoraMessageFlags,
     pub hid_op: CoraHidOp,
@@ -73,6 +77,7 @@ pub struct CoraMessage {
     pub payload: Vec<u8>,
 }
 
+#[cfg(feature = "alloc")]
 impl CoraMessage {
     /// Create a new Cora message
     pub fn new(flags: CoraMessageFlags, hid_op: CoraHidOp, message_id: u32, payload: Vec<u8>) -> Self {
@@ -115,16 +120,12 @@ impl CoraMessage {
     /// Decode message from bytes
     pub fn decode(buffer: &[u8]) -> Result<Self> {
         if buffer.len() < CORA_HEADER_SIZE {
-            return Err(Error::Protocol(format!(
-                "Cora message too short: need {} bytes, got {}",
-                CORA_HEADER_SIZE,
-                buffer.len()
-            )));
+            return Err(Error::Protocol("Cora message too short"));
         }
 
         // Check magic bytes
         if buffer[0..4] != CORA_MAGIC {
-            return Err(Error::Protocol("Invalid Cora magic bytes".to_string()));
+            return Err(Error::Protocol("Invalid Cora magic bytes"));
         }
 
         // Read flags (Little Endian)
@@ -143,11 +144,7 @@ impl CoraMessage {
         
         // Check if we have the full payload
         if buffer.len() < CORA_HEADER_SIZE + payload_length {
-            return Err(Error::Protocol(format!(
-                "Cora message incomplete: need {} bytes, got {}",
-                CORA_HEADER_SIZE + payload_length,
-                buffer.len()
-            )));
+            return Err(Error::Protocol("Cora message incomplete"));
         }
         
         // Extract payload

@@ -3,7 +3,7 @@
 //! This example provides an interactive command-line interface for controlling
 //! a Stream Deck Studio device over TCP.
 
-use streamdeck_rs_tcp::Device;
+use streamdeck_cona_rs::Device;
 use std::io::{self, Write};
 use tokio::io::{AsyncBufReadExt, BufReader};
 

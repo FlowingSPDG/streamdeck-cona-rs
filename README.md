@@ -1,7 +1,7 @@
-# streamdeck-rs-tcp
+# streamdeck-cona-rs
 
-[![crates.io](https://img.shields.io/crates/v/streamdeck-rs-tcp.svg)](https://crates.io/crates/streamdeck-rs-tcp)
-[![docs.rs](https://docs.rs/streamdeck-rs-tcp/badge.svg)](https://docs.rs/streamdeck-rs-tcp)
+[![crates.io](https://img.shields.io/crates/v/streamdeck-cona-rs.svg)](https://crates.io/crates/streamdeck-cona-rs)
+[![docs.rs](https://docs.rs/streamdeck-cona-rs/badge.svg)](https://docs.rs/streamdeck-cona-rs)
 
 Rust library for communicating with Elgato Stream Deck Studio devices via TCP/IP protocol using the **Cora protocol**.
 
@@ -25,7 +25,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-streamdeck-rs-tcp = "0.1.0"
+streamdeck-cona-rs = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -34,7 +34,7 @@ tokio = { version = "1", features = ["full"] }
 See `examples/simple_client.rs` for a complete example:
 
 ```rust
-use streamdeck_rs_tcp::Device;
+use streamdeck_cona_rs::Device;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,8 +73,8 @@ Key characteristics:
 
 This workspace contains two crates:
 
-- **`streamdeck-rs-tcp-core`**: no-std compatible core library for protocol parsing/encoding
-- **`streamdeck-rs-tcp`**: Full-featured async TCP library (depends on core)
+- **`streamdeck-cona-rs-core`**: no-std compatible core library for protocol parsing/encoding
+- **`streamdeck-cona-rs`**: Full-featured async TCP library (depends on core)
 
 ## Useful Links
 

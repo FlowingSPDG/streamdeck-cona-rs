@@ -1,11 +1,8 @@
-//! Protocol implementation for Stream Deck Studio TCP protocol
+//! Protocol re-exports from core library
 
-pub mod command;
-pub mod cora;
-pub mod event;
-pub mod packet;
-
-pub use command::{Command, CommandEncoder};
-pub use cora::{CoraMessage, CoraMessageFlags, CoraHidOp, is_cora_magic, is_legacy_keep_alive};
-pub use event::{Event, EventDecoder};
-pub use packet::{PacketReader, PacketWriter};
+pub use streamdeck_cona_rs_core::{
+    Command, CommandEncoder,
+    CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, CORA_HEADER_SIZE, is_cora_magic, is_legacy_keep_alive,
+    Event, EventDecoder,
+    PacketReader, PacketWriter,
+};

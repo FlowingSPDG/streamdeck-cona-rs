@@ -1,8 +1,8 @@
 //! Protocol parsing and serialization tests
 
-use streamdeck_rs_tcp::protocol::command::{Command, CommandEncoder};
-use streamdeck_rs_tcp::protocol::event::{Event, EventDecoder};
-use streamdeck_rs_tcp::protocol::packet::PACKET_SIZE;
+use streamdeck_cona_rs::protocol::command::{Command, CommandEncoder};
+use streamdeck_cona_rs::protocol::event::{Event, EventDecoder};
+use streamdeck_cona_rs::protocol::packet::PACKET_SIZE;
 
 #[test]
 fn test_brightness_command() {

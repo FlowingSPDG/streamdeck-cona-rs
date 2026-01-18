@@ -1,6 +1,6 @@
 //! Event handler example for Stream Deck Studio
 
-use streamdeck_rs_tcp::Device;
+use streamdeck_cona_rs::Device;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

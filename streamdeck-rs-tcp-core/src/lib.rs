@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use streamdeck_rs_tcp_core::{Command, CommandEncoder, Event, EventDecoder};
+//! use streamdeck_cona_rs_core::{Command, CommandEncoder, Event, EventDecoder};
 //!
 //! // Encode a command
 //! let command = Command::SetBrightness(80);
@@ -29,11 +29,13 @@ extern crate alloc;
 // String and Vec are used through command and event modules when alloc is enabled
 
 pub mod command;
+pub mod cora;
 pub mod error;
 pub mod event;
 pub mod packet;
 
 pub use command::{Command, CommandEncoder};
+pub use cora::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, CORA_HEADER_SIZE, is_cora_magic, is_legacy_keep_alive};
 pub use error::{Error, Result};
 pub use event::{Event, EventDecoder, TouchType};
 pub use packet::{PACKET_SIZE, PacketReader, PacketWriter};

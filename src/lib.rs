@@ -7,7 +7,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use streamdeck_rs_tcp::Device;
+//! use streamdeck_cona_rs::Device;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {

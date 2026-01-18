@@ -1,7 +1,7 @@
 //! TCP connection management with Cora protocol support
 
 use crate::error::{Error, Result};
-use crate::protocol::cora::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC};
+use streamdeck_cona_rs_core::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, PACKET_SIZE};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,9 +11,6 @@ use tokio::time::timeout;
 
 /// Timeout for keep-alive responses (5 seconds as per protocol)
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Legacy packet size for compatibility with Device API
-const PACKET_SIZE: usize = 1024;
 
 /// TCP connection wrapper for Stream Deck Studio (Cora protocol only)
 pub struct TcpConnection {
