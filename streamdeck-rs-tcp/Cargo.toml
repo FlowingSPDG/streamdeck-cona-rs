@@ -7,7 +7,6 @@ license.workspace = true
 repository.workspace = true
 description = "Rust library for controlling Elgato Stream Deck Studio via TCP protocol"
 readme = "../README.md"
-license-file = "../LICENSE"
 keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
 categories = ["hardware-support", "network-programming", "asynchronous"]
 
@@ -49,3 +48,7 @@ path = "examples/streamdeck_client.rs"
 [[example]]
 name = "streamdeck_server"
 path = "examples/streamdeck_server.rs"
+
+[[example]]
+name = "networkdock_server"
+path = "examples/networkdock_server.rs"

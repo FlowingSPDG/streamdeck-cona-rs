@@ -17,6 +17,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)]
+
 pub mod connection;
 pub mod device;
 pub mod error;

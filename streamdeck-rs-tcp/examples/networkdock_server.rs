@@ -1,6 +1,6 @@
-//! Stream Deck Studio Server Emulator (Cora Protocol)
+//! Stream Deck NetworkDock Server Emulator (Cora Protocol)
 //!
-//! This example implements a TCP server that emulates a Stream Deck Studio device.
+//! This example implements a TCP server that emulates a Stream Deck NetworkDock device.
 //! It uses the Cora protocol for communication.
 
 use std::sync::Arc;
@@ -109,7 +109,7 @@ impl ThrottledLogger {
         if now.duration_since(self.last_log_time) >= self.interval {
             let skipped = self.skip_count.swap(0, std::sync::atomic::Ordering::Relaxed);
             if skipped > 0 {
-                log(LogLevel::Debug, &format!("... ({} messages skipped)", skipped));
+                eprintln!("{} [INFO ] ... ({} messages skipped)", format_time(), skipped);
             }
             self.last_log_time = now;
             true
@@ -138,17 +138,8 @@ struct DeviceState {
 
 impl Default for DeviceState {
     fn default() -> Self {
-        // Generate unique serial number to avoid cache issues
-        // Format: EMULATOR_<timestamp>_<random>
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let random_part = (timestamp % 10000) as u32;
-        let serial_number = format!("EMULATOR_STUDIO_{:08X}", random_part);
-        
         Self {
-            serial_number,
+            serial_number: "EMULATOR123456".to_string(),
             firmware_version: "1.05.008".to_string(),
             brightness: 100,
             button_images: Default::default(),
@@ -632,24 +623,11 @@ async fn handle_client(
 
 /// Extract report ID from GET_REPORT request payload
 /// Returns None if the payload is not a valid GET_REPORT request
-/// 
-/// Primary port format: [0x03, report_id] (flags: NONE)
-/// Secondary port format: [report_id] (flags: VERBATIM)
-fn parse_get_report_request(payload: &[u8], flags: CoraMessageFlags) -> Option<u8> {
-    if flags == CoraMessageFlags::Verbatim {
-        // Secondary port format: [report_id]
-        if payload.len() >= 1 {
-            Some(payload[0])
-        } else {
-            None
-        }
+fn parse_get_report_request(payload: &[u8]) -> Option<u8> {
+    if payload.len() >= 2 && payload[0] == 0x03 {
+        Some(payload[1])
     } else {
-        // Primary port format: [0x03, report_id]
-        if payload.len() >= 2 && payload[0] == 0x03 {
-            Some(payload[1])
-        } else {
-            None
-        }
+        None
     }
 }
 
@@ -704,9 +682,8 @@ fn build_device2_info_payload(connected: bool, for_plug_event: bool) -> Vec<u8> 
         payload[27] = ((vendor_id >> 8) & 0xff) as u8;
         
         // Product ID at offset 28-29 (Little Endian)
-        // Stream Deck Studio product ID: 0x00aa
-        // According to @elgato-stream-deck/core: Studio productIds: [0x00aa]
-        let product_id: u16 = 0x00aa;
+        // Stream Deck NetworkDock product ID
+        let product_id: u16 = 0x0089; // NetworkDock product ID
         payload[28] = (product_id & 0xff) as u8;
         payload[29] = ((product_id >> 8) & 0xff) as u8;
         
@@ -756,46 +733,8 @@ async fn send_device2_plug_event(
 }
 
 /// Get data for a specific report ID from device state
-/// Build primary port device info payload (Report ID 0x80)
-/// This data will be wrapped by build_get_report_response_payload as:
-///   [0x03, 0x80, length_high, length_low, ...data...]
-/// TypeScript reads vendorId/productId from the wrapped payload at offset 12-14:
-///   offset 12-13 = data[12-4] = data[8-9] (after 4-byte header)
-///   offset 14-15 = data[14-4] = data[10-11] (after 4-byte header)
-/// So we need to put vendorId/productId at data offset 8-11
-fn build_primary_port_info_payload(vendor_id: u16, product_id: u16) -> Vec<u8> {
-    let mut payload = vec![0u8; 16];
-    // Vendor ID at data offset 8-9 (will be at payload offset 12-13 after wrapping)
-    payload[8] = (vendor_id & 0xff) as u8;
-    payload[9] = ((vendor_id >> 8) & 0xff) as u8;
-    // Product ID at data offset 10-11 (will be at payload offset 14-15 after wrapping)
-    payload[10] = (product_id & 0xff) as u8;
-    payload[11] = ((product_id >> 8) & 0xff) as u8;
-    payload
-}
-
-/// Build secondary port device info payload (Report ID 0x08)
-/// Same format as primary port
-fn build_secondary_port_info_payload(vendor_id: u16, product_id: u16) -> Vec<u8> {
-    build_primary_port_info_payload(vendor_id, product_id)
-}
-
 async fn get_report_data(state: &Arc<RwLock<DeviceState>>, report_id: u8) -> Option<Vec<u8>> {
     match report_id {
-        0x80 => {
-            // Primary port device info (Studio port)
-            // Vendor ID: 0x0fd9 (Elgato Systems GmbH)
-            // Product ID: 0x00aa (Stream Deck Studio)
-            // According to @elgato-stream-deck/core: Studio productIds: [0x00aa]
-            // For Studio, we must respond to 0x80 to be recognized as primary port
-            Some(build_primary_port_info_payload(0x0fd9, 0x00aa))
-        }
-        0x08 => {
-            // Secondary port device info (Device 2 port)
-            // For Studio, we should NOT respond to 0x08 to ensure it's recognized as primary port (0x80)
-            // If we respond to 0x08, it might be recognized as secondary port (NetworkDock)
-            None
-        }
         0x83 => {
             // Firmware version
             Some(state.read().await.firmware_version.as_bytes().to_vec())
@@ -853,16 +792,6 @@ async fn handle_message(
     connection_no: &Arc<Mutex<u8>>,
     throttled_logger: &mut ThrottledLogger,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Debug: Log all GET_REPORT requests with flags
-    if message.hid_op == CoraHidOp::GetReport {
-        if message.payload.len() > 0 {
-            log(LogLevel::Info, &format!("[Server] GET_REPORT received: flags={:?}, payload[0..2]={:02x} {:02x}", 
-                message.flags, 
-                message.payload[0],
-                if message.payload.len() > 1 { message.payload[1] } else { 0 }));
-        }
-    }
-    
     // Handle keep-alive ACK
     if message.flags == CoraMessageFlags::AckNak && message.payload.len() >= 3 && message.payload[0] == 0x03 && message.payload[1] == 0x1a {
         // Client responded to keep-alive
@@ -871,76 +800,14 @@ async fn handle_message(
         return Ok(());
     }
 
-    // Handle GET_REPORT requests regardless of HID operation
-    // Primary port format: [0x03, report_id] (flags: NONE)
-    // Secondary port format: [report_id] (flags: VERBATIM)
-    
-    // CRITICAL: Log ALL GET_REPORT requests to understand what the client is requesting
-    if message.hid_op == CoraHidOp::GetReport {
-        log(LogLevel::Info, &format!("[Server] GET_REPORT request received: flags={:?}, payload_len={}, payload[0..4]={:?}", 
-            message.flags, message.payload.len(),
-            if message.payload.len() >= 4 {
-                format!("{:02x} {:02x} {:02x} {:02x}", message.payload[0], message.payload[1], message.payload[2], message.payload[3])
-            } else {
-                format!("{:?}", message.payload)
-            }));
-    }
-    
-    if let Some(report_id) = parse_get_report_request(&message.payload, message.flags) {
-        // CRITICAL: Report ID 0x80 (primary port) must be handled FIRST to ensure Studio detection
-        // Report ID 0x08 (secondary port) should NOT be responded to for Studio devices
-        // Responding to 0x08 could cause misdetection as NetworkDock (secondary port device)
-        
-        match report_id {
-            0x80 => {
-                // PRIMARY PORT: Respond immediately with Studio device info
-                // This ensures Studio is detected correctly before any 0x08 response
-                log(LogLevel::Info, &format!("[Server] GET_REPORT request for PRIMARY port (0x80) - flags: {:?}", message.flags));
-                
-                // Build response data synchronously (no await) for fastest response
-                let data = build_primary_port_info_payload(0x0fd9, 0x00aa);
-                
-                // Log raw data for debugging
-                log(LogLevel::Debug, &format!("[Server] Raw 0x80 data (16 bytes): {}", 
-                    data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")));
-                
-                // Verify data structure: vendorId/productId should be at offset 8-11 in raw data
-                // After wrapping by build_get_report_response_payload, they will be at offset 12-15 in payload
-                if data.len() >= 16 {
-                    let raw_vendor_id = u16::from_le_bytes([data[8], data[9]]);
-                    let raw_product_id = u16::from_le_bytes([data[10], data[11]]);
-                    log(LogLevel::Info, &format!("[Server] Raw data: vendorId=0x{:04x} at [8-9], productId=0x{:04x} at [10-11]", 
-                        raw_vendor_id, raw_product_id));
-                    
-                    // After wrapping, these will be at offset 12-15 in the final payload
-                    log(LogLevel::Info, &format!("[Server] GET_REPORT response for PRIMARY port (0x80): vendorId=0x{:04x}, productId=0x{:04x} (Studio - Expected)", 
-                        raw_vendor_id, raw_product_id));
-                }
-                
-                send_get_report_response(writer, message.message_id, report_id, data).await?;
-                return Ok(());
-            }
-            0x08 => {
-                // SECONDARY PORT: Explicitly DO NOT respond for Studio devices
-                // Responding here could cause misdetection as NetworkDock
-                // The client will race 0x80 vs 0x08 - we want 0x80 to win
-                log(LogLevel::Info, &format!("[Server] GET_REPORT request for SECONDARY port (0x08) IGNORED - not responding to ensure Studio detection (flags: {:?})", message.flags));
-                // Explicitly return without response
-                return Ok(());
-            }
-            _ => {
-                // Other report IDs - handle normally
-                if let Some(data) = get_report_data(state, report_id).await {
-                    // Log response for other important Report IDs
-                    if report_id == 0x83 || report_id == 0x84 || report_id == 0x1c {
-                        log(LogLevel::Debug, &format!("[Server] GET_REPORT response for 0x{:02x}", report_id));
-                    }
-                    // Use throttled logger for other GET_REPORT requests (can be very frequent)
-                    throttled_logger.log(LogLevel::Debug, &format!("[Server] GET_REPORT request (Report ID: 0x{:02x})", report_id));
-                    send_get_report_response(writer, message.message_id, report_id, data).await?;
-                    return Ok(());
-                }
-            }
+    // Handle GET_REPORT requests regardless of HID operation (0x03 0x83, 0x03 0x84, etc.)
+    // Some clients may send GET_REPORT requests with different HID operations
+    if let Some(report_id) = parse_get_report_request(&message.payload) {
+        if let Some(data) = get_report_data(state, report_id).await {
+            // Use throttled logger for GET_REPORT requests (can be very frequent)
+            throttled_logger.log(LogLevel::Debug, &format!("[Server] GET_REPORT request (Report ID: 0x{:02x})", report_id));
+            send_get_report_response(writer, message.message_id, report_id, data).await?;
+            return Ok(());
         }
     }
 
@@ -1212,24 +1079,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr).await?;
 
-    log(LogLevel::Info, "Stream Deck Studio Emulator (Cora Protocol)");
-    log(LogLevel::Info, &format!("Listening on {}...", addr));
-    log(LogLevel::Info, "Connect clients to this address");
-    log(LogLevel::Info, "Type 'help' for available commands");
-    log(LogLevel::Info, "Press Ctrl+C or type 'quit' to stop");
-    println!();
+    println!("Stream Deck NetworkDock Emulator (Cora Protocol)");
+    println!("Listening on {}...", addr);
+    println!("Connect clients to this address");
+    println!("Type 'help' for available commands");
+    println!("Press Ctrl+C or type 'quit' to stop\n");
 
     let state = Arc::new(RwLock::new(DeviceState::default()));
-    {
-        // Log device information on startup
-        let device_state = state.read().await;
-        log(LogLevel::Info, &format!("[Device] Serial Number: {}", device_state.serial_number));
-        log(LogLevel::Info, &format!("[Device] Firmware Version: {}", device_state.firmware_version));
-        log(LogLevel::Info, &format!("[Device] Vendor ID: 0x0fd9 (Elgato Systems GmbH)"));
-        log(LogLevel::Info, &format!("[Device] Product ID: 0x00aa (Stream Deck Studio)"));
-        log(LogLevel::Info, &format!("[Device] Device Type: Studio (Primary Port, Report ID 0x80)"));
-        log(LogLevel::Info, &format!("[Device] Note: Report ID 0x08 will NOT be responded to ensure Studio detection"));
-    }
     let clients: Arc<Mutex<Vec<ClientConnection>>> = Arc::new(Mutex::new(Vec::new()));
 
     // Handle Ctrl+C signal
