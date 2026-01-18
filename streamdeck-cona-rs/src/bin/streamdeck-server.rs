@@ -136,6 +136,7 @@ struct DeviceState {
     button_images: [Option<Vec<u8>>; 32],
     encoder_colors: [(u8, u8, u8); 2],
     device2_connected: bool, // Device 2 (Child Device) connection state
+    button_states: [bool; 32], // Button states (true = pressed, false = released)
 }
 
 impl Default for DeviceState {
@@ -156,6 +157,7 @@ impl Default for DeviceState {
             button_images: Default::default(),
             encoder_colors: [(0, 0, 0), (0, 0, 0)],
             device2_connected: false, // Device 2 starts disconnected
+            button_states: [false; 32], // All buttons start released
         }
     }
 }
@@ -198,6 +200,7 @@ async fn send_button_event(
 
     let event_data = event_message.encode();
     writer.write_all(&event_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -236,6 +239,7 @@ async fn send_encoder_rotate_event(
 
     let event_data = event_message.encode();
     writer.write_all(&event_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -274,6 +278,7 @@ async fn send_encoder_press_event(
 
     let event_data = event_message.encode();
     writer.write_all(&event_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -420,6 +425,8 @@ async fn broadcast_touch_event(
 }
 
 /// Send keep-alive packet to client
+/// Per PROTOCOL.md: payload is [0x01, 0x0a, ...] with connection_no at index 5
+/// Fixed-length packets: pad to 1024 bytes (same as client sends ACK in fixed-length format)
 async fn send_keep_alive(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     next_message_id: &Arc<Mutex<u32>>,
@@ -428,13 +435,19 @@ async fn send_keep_alive(
     let mut msg_id = next_message_id.lock().await;
     let conn_no = *connection_no.lock().await;
     
+    // Fixed-length packet (1024 bytes) with padding, matching client's fixed-length ACK format
     let keep_alive_payload = {
-        let mut payload = vec![0u8; 32];
+        let mut payload = vec![0u8; 1024];  // Fixed-length: pad to 1024 bytes
         payload[0] = 0x01;
         payload[1] = 0x0a;
-        payload[5] = conn_no;
+        payload[5] = conn_no;  // Connection number at index 5 (per PROTOCOL.md)
         payload
     };
+
+    log(LogLevel::Debug, &format!(
+        "[Server] Sending keep-alive: msg_id={}, conn_no={} (payload[5]={}), payload=[01, 0a, ...]",
+        *msg_id, conn_no, keep_alive_payload[5]
+    ));
 
     let keep_alive_message = CoraMessage::new(
         CoraMessageFlags::None,
@@ -446,6 +459,7 @@ async fn send_keep_alive(
 
     let keep_alive_data = keep_alive_message.encode();
     writer.write_all(&keep_alive_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -582,28 +596,94 @@ async fn handle_client(
                 break;
             }
 
-            // Read payload length from header
+            // Read payload length from header (Little Endian - confirmed)
+            // Client sends fixed-length packets (1024 bytes) with padding for short commands
             let payload_length = u32::from_le_bytes([
                 receive_buffer[12], receive_buffer[13], receive_buffer[14], receive_buffer[15]
             ]) as usize;
+            
+            // Log header details for debugging
+            log(LogLevel::Debug, &format!(
+                "[Server] Header: payload_length={} (LE, raw bytes: {:02x} {:02x} {:02x} {:02x}), buffer_len={}, message_size={}",
+                payload_length, receive_buffer[12], receive_buffer[13], receive_buffer[14], receive_buffer[15],
+                receive_buffer.len(), CORA_HEADER_SIZE + payload_length
+            ));
 
-            // Check if we have full message
+            // Check if we have full message (wait for complete packet including padding)
+            // Short packets are padded to fixed length (1024 bytes) with 0x00
             if receive_buffer.len() < CORA_HEADER_SIZE + payload_length {
                 break;
             }
 
-            // Decode message
-            match CoraMessage::decode(&receive_buffer[..CORA_HEADER_SIZE + payload_length]) {
+            let message_bytes = &receive_buffer[..CORA_HEADER_SIZE + payload_length];
+
+            // Decode message (fixed-length packets with padding for short commands)
+            match CoraMessage::decode(message_bytes) {
                 Ok(message) => {
+                    // Find actual meaningful payload length (data before padding)
+                    // Padding is 0x00, so find last non-zero byte
+                    let actual_payload_len = message.payload.iter()
+                        .rposition(|&b| b != 0)
+                        .map(|pos| pos + 1)
+                        .unwrap_or(0);
+                    
+                    // Log received message details
+                    let payload_preview = if message.payload.len() <= 16 {
+                        format!("{:02x?}", message.payload)
+                    } else {
+                        format!("{:02x?}...", &message.payload[..16])
+                    };
+                    // Get raw flags value for debugging (check if VERBATIM flag is set)
+                    let raw_flags_bytes = if receive_buffer.len() >= 6 {
+                        format!("{:02x} {:02x}", receive_buffer[4], receive_buffer[5])
+                    } else {
+                        "??".to_string()
+                    };
+                    let raw_flags_value = u16::from_le_bytes([
+                        if receive_buffer.len() >= 6 { receive_buffer[4] } else { 0 },
+                        if receive_buffer.len() >= 6 { receive_buffer[5] } else { 0 }
+                    ]);
+                    
+                    log(LogLevel::Info, &format!(
+                        "[Server] Decoded message: hid_op={:?}, flags={:?} (raw: 0x{:04x}, bytes: {}), msg_id={}, payload_len={} (with padding), actual_data_len={}, payload={}", 
+                        message.hid_op, message.flags, raw_flags_value, raw_flags_bytes, message.message_id, message.payload.len(), actual_payload_len, payload_preview
+                    ));
+                    
+                    // Log padding info at debug level (expected behavior)
+                    if actual_payload_len > 0 && actual_payload_len < message.payload.len() && actual_payload_len < 64 {
+                        log(LogLevel::Debug, &format!(
+                            "[Server] Fixed-length packet with padding: data_len={}, padded_len={} (expected for short commands)",
+                            actual_payload_len, message.payload.len()
+                        ));
+                    }
+
                     // Remove processed message from buffer
                     receive_buffer.drain(..CORA_HEADER_SIZE + payload_length);
 
                     // Handle message
                     {
                         let mut writer_guard = writer_shared.lock().await;
-                        if let Err(e) = handle_message(&message, &mut *writer_guard, &state, &next_message_id, &connection_no, &mut throttled_logger).await {
-                            log_error(&format!("[Server] Error handling message: {} (continuing)", e));
-                            // Continue processing even if one message fails
+                        match handle_message(&message, &mut *writer_guard, &state, &next_message_id, &connection_no, &mut throttled_logger).await {
+                            Ok(()) => {
+                                // Message handled successfully
+                                // Update last data time after processing message (including keep-alive ACK)
+                                _last_data_time = std::time::Instant::now();
+                            }
+                            Err(e) => {
+                                // Error handling message - log but continue processing
+                                // Don't disconnect on single message error (could be transient)
+                                let error_str = e.to_string();
+                                log_error(&format!("[Server] Error handling message (hid_op={:?}, flags={:?}, msg_id={}): {} (continuing)", 
+                                    message.hid_op, message.flags, message.message_id, error_str));
+                                
+                                // Check if it's a critical error that requires disconnection
+                                if error_str.contains("Broken pipe") || error_str.contains("Connection reset") || error_str.contains("Connection aborted") {
+                                    log_error(&format!("[Server] Critical connection error detected, will disconnect"));
+                                    break;
+                                }
+                                // For other errors, continue processing but don't update last data time
+                                // This allows keep-alive to detect stale connections
+                            }
                         }
                     }
                 }
@@ -635,18 +715,21 @@ async fn handle_client(
 /// Extract report ID from GET_REPORT request payload
 /// Returns None if the payload is not a valid GET_REPORT request
 /// 
-/// Primary port format: [0x03, report_id] (flags: NONE)
-/// Secondary port format: [report_id] (flags: VERBATIM)
+/// Primary port format: [0x03, report_id] (flags: NONE = 0x0000)
+/// Secondary port format: [report_id] (flags: VERBATIM = 0x8000)
 fn parse_get_report_request(payload: &[u8], flags: CoraMessageFlags) -> Option<u8> {
+    // Check flags to determine port format
+    // VERBATIM flag (0x8000) indicates secondary port format
     if flags == CoraMessageFlags::Verbatim {
-        // Secondary port format: [report_id]
+        // Secondary port format: [report_id] (flags: VERBATIM = 0x8000)
         if payload.len() >= 1 {
             Some(payload[0])
         } else {
             None
         }
     } else {
-        // Primary port format: [0x03, report_id]
+        // Primary port format: [0x03, report_id] (flags: NONE = 0x0000)
+        // Also handles other flags (ReqAck, AckNak, Result) as primary port format
         if payload.len() >= 2 && payload[0] == 0x03 {
             Some(payload[1])
         } else {
@@ -656,8 +739,20 @@ fn parse_get_report_request(payload: &[u8], flags: CoraMessageFlags) -> Option<u
 }
 
 /// Build GET_REPORT response payload in standard format
-/// Format: [0x03, report_id, length_high, length_low, ...data...]
-/// Length field is Big Endian (unlike other fields which are Little Endian)
+/// Build GET_REPORT response payload following HID Feature Report structure
+/// Based on Elgato HID API documentation: https://docs.elgato.com/streamdeck/hid/module-15_32
+/// 
+/// USB HID Feature Report structure (from official docs):
+///   Offset 0: Report ID
+///   Offset 1: Data Length (or Command)
+///   Offset 2+: Payload data
+/// 
+/// TCP/Cora protocol wraps this as:
+///   Format: [0x03, report_id, length_high, length_low, ...data...]
+///   - 0x03: Fixed prefix for Feature Report in Cora protocol
+///   - report_id: Feature Report ID (e.g., 0x83=firmware, 0x84=serial, 0x85=MAC)
+///   - length_high, length_low: Big Endian length of data (unlike other fields which are Little Endian)
+///   - data: Actual response data following HID Feature Report format
 fn build_get_report_response_payload(report_id: u8, data: &[u8]) -> Vec<u8> {
     let len = data.len().min(65535) as u16;
     let mut payload = Vec::with_capacity(4 + len as usize);
@@ -753,6 +848,7 @@ async fn send_device2_plug_event(
 
     let event_data = plug_event_message.encode();
     writer.write_all(&event_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -761,25 +857,26 @@ async fn send_device2_plug_event(
 /// Build primary port device info payload (Report ID 0x80)
 /// This data will be wrapped by build_get_report_response_payload as:
 ///   [0x03, 0x80, length_high, length_low, ...data...]
-/// TypeScript reads vendorId/productId from the wrapped payload at offset 12-14:
-///   offset 12-13 = data[12-4] = data[8-9] (after 4-byte header)
-///   offset 14-15 = data[14-4] = data[10-11] (after 4-byte header)
-/// So we need to put vendorId/productId at data offset 8-11
+/// TypeScript client (cora.ts:161-162) reads vendorId/productId from the wrapped payload at offset 12-15:
+///   const vendorId = dataView.getUint16(12, true)  // Little Endian
+///   const productId = dataView.getUint16(14, true) // Little Endian
+/// The wrapped payload structure:
+///   Offset 0-1: [0x03, 0x80] (2 bytes)
+///   Offset 2-3: [len_high, len_low] (2 bytes, Big Endian)
+///   Offset 4+: data (16 bytes)
+/// So offset 12-13 in wrapped payload = data[8-9], offset 14-15 = data[10-11]
+/// We need to put VID at data[8-9] and PID at data[10-11] in Little Endian format
 fn build_primary_port_info_payload(vendor_id: u16, product_id: u16) -> Vec<u8> {
     let mut payload = vec![0u8; 16];
-    // Vendor ID at data offset 8-9 (will be at payload offset 12-13 after wrapping)
-    payload[8] = (vendor_id & 0xff) as u8;
-    payload[9] = ((vendor_id >> 8) & 0xff) as u8;
-    // Product ID at data offset 10-11 (will be at payload offset 14-15 after wrapping)
-    payload[10] = (product_id & 0xff) as u8;
-    payload[11] = ((product_id >> 8) & 0xff) as u8;
+    // Vendor ID at data offset 8-9 (Little Endian: lower byte first)
+    // After wrapping: will be at payload offset 12-13
+    payload[8] = (vendor_id & 0xff) as u8;       // Lower byte
+    payload[9] = ((vendor_id >> 8) & 0xff) as u8; // Upper byte
+    // Product ID at data offset 10-11 (Little Endian: lower byte first)
+    // After wrapping: will be at payload offset 14-15
+    payload[10] = (product_id & 0xff) as u8;       // Lower byte
+    payload[11] = ((product_id >> 8) & 0xff) as u8; // Upper byte
     payload
-}
-
-/// Build secondary port device info payload (Report ID 0x08)
-/// Same format as primary port
-fn build_secondary_port_info_payload(vendor_id: u16, product_id: u16) -> Vec<u8> {
-    build_primary_port_info_payload(vendor_id, product_id)
 }
 
 async fn get_report_data(state: &Arc<RwLock<DeviceState>>, report_id: u8) -> Option<Vec<u8>> {
@@ -793,29 +890,155 @@ async fn get_report_data(state: &Arc<RwLock<DeviceState>>, report_id: u8) -> Opt
             Some(build_primary_port_info_payload(0x0fd9, 0x00aa))
         }
         0x08 => {
-            // Secondary port device info (Device 2 port)
-            // For Studio, we should NOT respond to 0x08 to ensure it's recognized as primary port (0x80)
-            // If we respond to 0x08, it might be recognized as secondary port (NetworkDock)
-            None
+            // Secondary port device info (Device 2 port) - Report ID 0x08
+            // Based on HID Feature Report structure from official docs:
+            //   USB HID: [Report ID (0x08), Data Length, ...device info...]
+            //   TCP/Cora wraps as: [0x03, 0x08, len_high, len_low, ...USB HID data...]
+            // 
+            // TypeScript client behavior:
+            // - Uses Promise.race to send both 0x80 and 0x08 concurrently
+            // - First response determines if it's primary (0x80) or secondary (0x08) port
+            // - If 0x08 responds, client sets isPrimary=false, then queries 0x1c for Device 2 info
+            // - Even if Device 2 is not connected, we should respond to acknowledge the request
+            // 
+            // NOTE: The exact structure of 0x08 response is unclear from client code.
+            // The client only checks if 0x08 responds (to determine secondary port),
+            // but doesn't parse vendorId/productId from 0x08 - it uses 0x1c for that.
+            // For now, we return the same structure as 0x80 to acknowledge the request.
+            // TODO: Verify actual 0x08 response structure from real device behavior
+            Some(build_primary_port_info_payload(0x0fd9, 0x00aa))
         }
         0x83 => {
-            // Firmware version
-            Some(state.read().await.firmware_version.as_bytes().to_vec())
+            // Firmware version (AP2) - Report ID 0x83
+            // Based on HID Feature Report structure from official docs:
+            //   USB HID: [Report ID (0x05), Data Length (0x0C), Checksum (UINT32), Version String (UINT8[8])]
+            //   TCP/Cora wraps as: [0x03, 0x83, len_high, len_low, ...USB HID data...]
+            // 
+            // TypeScript client expectations:
+            // - getFirmwareVersion() reads data.subarray(8, 16) = data[4] after wrapping (0x03+report_id+length)
+            // - getAllFirmwareVersions() uses ap2Data.slice(2), then parseAllFirmwareVersionsHelper reads subarray(6, 6+8)
+            //   This means it expects version at offset 6 after slice(2), which is data[2] in original data
+            // 
+            // To support both, we place firmware version at both data[2] and data[4]
+            // This data will be wrapped by build_get_report_response_payload as:
+            //   [0x03, 0x83, 0x00, 0x10, ...fw_data...] where fw_data[2] and fw_data[4] contain version
+            let device_state = state.read().await;
+            let fw_version = device_state.firmware_version.clone();
+            drop(device_state);
+            
+            let mut fw_data = vec![0u8; 16];
+            let fw_bytes = fw_version.as_bytes();
+            let copy_len = fw_bytes.len().min(8);
+            // Put firmware version at offset 2 (for getAllFirmwareVersions) and offset 4 (for getFirmwareVersion)
+            fw_data[2..2 + copy_len].copy_from_slice(&fw_bytes[..copy_len]);
+            fw_data[4..4 + copy_len].copy_from_slice(&fw_bytes[..copy_len]);
+            Some(fw_data)
+        }
+        0x86 | 0x8a => {
+            // Encoder firmware version (AP2 = 0x86, LD = 0x8a)
+            // TypeScript: encoderAp2Data.slice(2) or encoderLdData.slice(2), then parseAllFirmwareVersionsHelper reads subarray(2, 2+8)
+            // Response format: [0x03, 0x86/0x8a, len_high, len_low, ...data...]
+            // After slice(2): [len_high, len_low, ...data...]
+            // parseAllFirmwareVersionsHelper reads offset 2 from sliced data, which is data[0] in original data
+            // Also checks data[0] === 0x18 || data[1] === 0x18
+            // So firmware version should be at data[0] (which becomes offset 2 after slice(2))
+            // And we need 0x18 at data[0] or data[1] for the check to pass
+            let device_state = state.read().await;
+            let fw_version = device_state.firmware_version.clone();
+            drop(device_state);
+            
+            let mut fw_data = vec![0u8; 32];
+            let fw_bytes = fw_version.as_bytes();
+            let copy_len = fw_bytes.len().min(8);
+            // Put firmware version at data[0] (offset 2 after slice(2))
+            // Put 0x18 at data[1] to pass the check (since firmware version starts at data[0])
+            fw_data[0..copy_len].copy_from_slice(&fw_bytes[..copy_len]);
+            fw_data[1] = 0x18; // Magic byte for encoder firmware (at offset 1 to pass check)
+            Some(fw_data)
         }
         0x84 => {
-            // Serial number
-            Some(state.read().await.serial_number.as_bytes().to_vec())
+            // Serial number - Report ID 0x84
+            // Based on HID Feature Report structure from official docs:
+            //   USB HID: [Report ID (0x06), Data Length (0x0C or 0x0E), Serial String ASCII]
+            //   TCP/Cora wraps as: [0x03, 0x84, len_high, len_low, ...serial...]
+            // 
+            // TypeScript: getSerialNumber() reads data[3] for length (len_low if len_high=0), 
+            // then data.subarray(4, 4+length) for the serial string
+            // Since we return serial bytes directly, build_get_report_response_payload will add [0x03, 0x84, len_high, len_low]
+            // For typical serial numbers (< 256 bytes), len_high=0, so data[3] (len_low) contains the length
+            let device_state = state.read().await;
+            let serial = device_state.serial_number.clone();
+            drop(device_state);
+            
+            Some(serial.as_bytes().to_vec())
+        }
+        0x85 => {
+            // MAC address
+            // TypeScript: getMacAddress() reads data.subarray(4, 10) (6 bytes)
+            // Response format: [0x03, 0x85, len_high, len_low, ...mac...]
+            // TypeScript reads offset 4-10, which is len_high + len_low + mac[0..5]
+            // So MAC address should start at data[0] (which becomes offset 4 after wrapping)
+            // MAC address is 6 bytes: [mac0, mac1, mac2, mac3, mac4, mac5]
+            // Placeholder MAC address: 00:1A:2B:3C:4D:5E
+            Some(vec![0x00, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E])
         }
         0x1c => {
-            // Device 2 (Child Device) information
-            // Returns structured data as per device2Info.ts
-            // For GET_REPORT responses, we don't include the 0x01 0x0b prefix
-            Some(build_device2_info_payload(state.read().await.device2_connected, false))
+            // Device 2 (Child Device) information - Report ID 0x1c
+            // Based on device2Info.ts: parseDevice2Info structure
+            //   - Offset 4: Device status (0x02 = connected/OK, 0x00 = disconnected)
+            //   - Offset 26-27: vendorId (Little Endian, u16)
+            //   - Offset 28-29: productId (Little Endian, u16)
+            //   - Offset 94-125: Serial number (ASCII, up to 32 bytes)
+            //   - Offset 126-127: TCP port (Little Endian, u16)
+            // 
+            // TypeScript client: parseDevice2Info checks offset 4 - if != 0x02, returns null
+            // Even if Device 2 is not connected, we should return 128-byte payload with offset 4 = 0x00
+            // This allows client to properly detect disconnected state (returns null but acknowledges request)
+            // 
+            // For GET_REPORT responses, we don't include the 0x01 0x0b prefix (that's for plug events)
+            let device2_connected = state.read().await.device2_connected;
+            let payload = build_device2_info_payload(device2_connected, false);
+            Some(payload)
         }
-        0x8f | 0x87 | 0x1a => {
-            // Unknown Report IDs - return empty data
-            // 0x1a: Keep-alive related (already handled separately, but may come as GET_REPORT)
-            // 0x8f, 0x87: Optional features or device-specific queries
+        0x87 => {
+            // Button state query (GET_REPORT 0x87)
+            // Based on productiondeck USB HID implementation:
+            // Studio uses TCP, so Input Report (HID Read) is not available
+            // GET_REPORT 0x87 is used to poll button states via Feature Report
+            // Format: [0x03, 0x87, len_high, len_low, ...button_states...]
+            // Button state format: Similar to Input Report format
+            // Module 15/32 format: [0x01, 0x00, length_low, length_high, ...button_states...]
+            // Studio has 32 buttons, so we need at least 36 bytes (4 header + 32 button states)
+            let device_state = state.read().await;
+            let mut button_data = vec![0u8; 36];
+            
+            // Module 15/32 Input Report format (same as USB HID Input Report)
+            // Report ID 0x01, Command 0x00, Length = number of buttons, then states
+            button_data[0] = 0x01; // Report ID
+            button_data[1] = 0x00; // Command: key state change
+            button_data[2] = 32;   // length LSB (32 buttons)
+            button_data[3] = 0x00; // length MSB
+            
+            // Copy button states (1 = pressed, 0 = released)
+            for (i, &pressed) in device_state.button_states.iter().enumerate() {
+                if i < 32 {
+                    button_data[4 + i] = if pressed { 1 } else { 0 };
+                }
+            }
+            
+            Some(button_data)
+        }
+        0x8f => {
+            // Device-specific query (0x8f) - should return proper response
+            // Based on protocol patterns, return minimal status response
+            // Format: [0x03, 0x8f, len_high, len_low, ...data...]
+            // Return minimal 4-byte response: [0x00, 0x00, 0x00, 0x00] to acknowledge
+            // This will be wrapped as [0x03, 0x8f, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00]
+            Some(vec![0x00, 0x00, 0x00, 0x00])
+        }
+        0x1a => {
+            // Keep-alive related (already handled separately, but may come as GET_REPORT)
+            // Return empty data to avoid confusion
             Some(Vec::new())
         }
         _ => {
@@ -838,11 +1061,33 @@ async fn send_get_report_response(
         CoraMessageFlags::Result,
         CoraHidOp::GetReport,
         message_id,
-        response_payload,
+        response_payload.clone(),
     );
     
     let response_data = response.encode();
+    
+    let payload_preview = if response_payload.len() <= 16 {
+        format!("{:02x?}", response_payload)
+    } else {
+        format!("{:02x?}...", &response_payload[..16])
+    };
+    log(LogLevel::Info, &format!(
+        "[Server] Sending GET_REPORT response: report_id=0x{:02x}, msg_id={}, payload_len={}, payload={}",
+        report_id, message_id, response_payload.len(), payload_preview
+    ));
+    
+    let encoded_preview = if response_data.len() <= 20 {
+        format!("{:02x?}", response_data)
+    } else {
+        format!("{:02x?}...", &response_data[..20])
+    };
+    log(LogLevel::Info, &format!(
+        "[Server] Encoded message: len={}, data={}",
+        response_data.len(), encoded_preview
+    ));
+    
     writer.write_all(&response_data).await?;
+    writer.flush().await?;
     
     Ok(())
 }
@@ -855,91 +1100,134 @@ async fn handle_message(
     connection_no: &Arc<Mutex<u8>>,
     throttled_logger: &mut ThrottledLogger,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Debug: Log all GET_REPORT requests with flags
-    if message.hid_op == CoraHidOp::GetReport {
-        if message.payload.len() > 0 {
-            log(LogLevel::Info, &format!("[Server] GET_REPORT received: flags={:?}, payload[0..2]={:02x} {:02x}", 
-                message.flags, 
-                message.payload[0],
-                if message.payload.len() > 1 { message.payload[1] } else { 0 }));
+    // Handle keep-alive ACK (0x03 0x1a)
+    // Per PROTOCOL.md: ACK response has flags=ACK_NAK (0x0200) and payload=[0x03, 0x1a, connection_no, ...] (32 bytes)
+    // Fixed-length packets: payload is always 1024 bytes with padding, but keep-alive ACK has connection_no at index 2
+    // Connection_no can be 0, which is valid data (not padding)
+    // This is the most frequently sent message (every 4 seconds) - critical for connection stability
+    if message.payload.len() >= 3 && message.payload[0] == 0x03 && message.payload[1] == 0x1a {
+        // Extract connection_no (at index 2, can be 0 which is valid)
+        let conn_no_value = message.payload[2];
+        
+        // Get current connection number before update
+        let old_conn_no = {
+            let conn_no_guard = connection_no.lock().await;
+            *conn_no_guard
+        };
+        
+        // Update connection number from keep-alive ACK (even if flags/hid_op are unexpected)
+        // This is critical for proper keep-alive handling - connection_no cycles through values
+        {
+            let mut conn_no = connection_no.lock().await;
+            *conn_no = conn_no_value;
         }
-    }
-    
-    // Handle keep-alive ACK
-    if message.flags == CoraMessageFlags::AckNak && message.payload.len() >= 3 && message.payload[0] == 0x03 && message.payload[1] == 0x1a {
-        // Client responded to keep-alive
-        let mut conn_no = connection_no.lock().await;
-        *conn_no = message.payload[2];
+        
+        // Log connection number change if it's different (helps debug connection_no cycling)
+        if conn_no_value != old_conn_no {
+            log(LogLevel::Info, &format!(
+                "[Server] Keep-alive ACK: connection_no CHANGED from {} to {} (flags={:?}, hid_op={:?})",
+                old_conn_no, conn_no_value, message.flags, message.hid_op
+            ));
+        } else {
+            // Connection number unchanged (could be 0 or same value)
+            // Only log at debug level to avoid spam since this happens every 4 seconds
+            log(LogLevel::Debug, &format!(
+                "[Server] Keep-alive ACK: connection_no={} (unchanged), flags={:?}, hid_op={:?}",
+                conn_no_value, message.flags, message.hid_op
+            ));
+        }
+        
+        // Always return Ok() for keep-alive ACK (don't process further)
         return Ok(());
     }
 
     // Handle GET_REPORT requests regardless of HID operation
-    // Primary port format: [0x03, report_id] (flags: NONE)
-    // Secondary port format: [report_id] (flags: VERBATIM)
+    // Primary port format: [0x03, report_id] (flags: NONE = 0x0000)
+    // Secondary port format: [report_id] (flags: VERBATIM = 0x8000)
+    // NOTE: Some clients send GET_REPORT requests with hid_op=Write, so we detect by payload content
     
-    // CRITICAL: Log ALL GET_REPORT requests to understand what the client is requesting
-    if message.hid_op == CoraHidOp::GetReport {
-        log(LogLevel::Info, &format!("[Server] GET_REPORT request received: flags={:?}, payload_len={}, payload[0..4]={:?}", 
-            message.flags, message.payload.len(),
-            if message.payload.len() >= 4 {
-                format!("{:02x} {:02x} {:02x} {:02x}", message.payload[0], message.payload[1], message.payload[2], message.payload[3])
-            } else {
-                format!("{:?}", message.payload)
-            }));
-    }
-    
+    // Try to parse GET_REPORT request from payload
+    // This handles both primary port ([0x03, report_id]) and secondary port ([report_id]) formats
     if let Some(report_id) = parse_get_report_request(&message.payload, message.flags) {
-        // CRITICAL: Report ID 0x80 (primary port) must be handled FIRST to ensure Studio detection
-        // Report ID 0x08 (secondary port) should NOT be responded to for Studio devices
-        // Responding to 0x08 could cause misdetection as NetworkDock (secondary port device)
+        // Log the detection with detailed flag information
+        let flags_value = message.flags as u16;
+        let is_verbatim = message.flags == CoraMessageFlags::Verbatim;
+        let port_type = if is_verbatim { "Secondary" } else { "Primary" };
+        
+        // Special logging for critical report IDs (0x80 and 0x08) - these are sent during initialization
+        if report_id == 0x80 || report_id == 0x08 {
+            log(LogLevel::Warn, &format!(
+                "[Server] *** INITIALIZATION GET_REPORT DETECTED ***: report_id=0x{:02x}, flags={:?} (0x{:04x}), port={}, hid_op={:?}, payload_preview={:02x?}",
+                report_id, message.flags, flags_value, port_type, message.hid_op,
+                if message.payload.len() >= 2 { &message.payload[..2] } else { &message.payload }
+            ));
+        }
+        
+        if message.hid_op != CoraHidOp::GetReport {
+            log(LogLevel::Info, &format!(
+                "[Server] Detected GET_REPORT request by payload: report_id=0x{:02x}, flags={:?} (0x{:04x}), port={}, hid_op={:?} (not GetReport) - treating as GET_REPORT based on payload content",
+                report_id, message.flags, flags_value, port_type, message.hid_op
+            ));
+        } else {
+            log(LogLevel::Info, &format!(
+                "[Server] Received GET_REPORT request: report_id=0x{:02x}, flags={:?} (0x{:04x}), port={}, hid_op={:?}",
+                report_id, message.flags, flags_value, port_type, message.hid_op
+            ));
+        }
+        
+        // Report ID 0x80 (primary port) and 0x08 (secondary port) are both used for device detection
+        // Client uses Promise.race to send both requests concurrently
+        // Both should respond to acknowledge the request, even if Device 2 is not connected
+        // The first response received determines whether it's detected as primary or secondary port
         
         match report_id {
             0x80 => {
-                // PRIMARY PORT: Respond immediately with Studio device info
-                // This ensures Studio is detected correctly before any 0x08 response
-                log(LogLevel::Info, &format!("[Server] GET_REPORT request for PRIMARY port (0x80) - flags: {:?}", message.flags));
-                
-                // Build response data synchronously (no await) for fastest response
+                // PRIMARY PORT: Respond with Studio device info
+                log(LogLevel::Info, "[Server] Responding to GET_REPORT 0x80 (Primary Port) with Studio device info");
                 let data = build_primary_port_info_payload(0x0fd9, 0x00aa);
-                
-                // Log raw data for debugging
-                log(LogLevel::Debug, &format!("[Server] Raw 0x80 data (16 bytes): {}", 
-                    data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")));
-                
-                // Verify data structure: vendorId/productId should be at offset 8-11 in raw data
-                // After wrapping by build_get_report_response_payload, they will be at offset 12-15 in payload
-                if data.len() >= 16 {
-                    let raw_vendor_id = u16::from_le_bytes([data[8], data[9]]);
-                    let raw_product_id = u16::from_le_bytes([data[10], data[11]]);
-                    log(LogLevel::Info, &format!("[Server] Raw data: vendorId=0x{:04x} at [8-9], productId=0x{:04x} at [10-11]", 
-                        raw_vendor_id, raw_product_id));
-                    
-                    // After wrapping, these will be at offset 12-15 in the final payload
-                    log(LogLevel::Info, &format!("[Server] GET_REPORT response for PRIMARY port (0x80): vendorId=0x{:04x}, productId=0x{:04x} (Studio - Expected)", 
-                        raw_vendor_id, raw_product_id));
-                }
-                
                 send_get_report_response(writer, message.message_id, report_id, data).await?;
                 return Ok(());
             }
             0x08 => {
-                // SECONDARY PORT: Explicitly DO NOT respond for Studio devices
-                // Responding here could cause misdetection as NetworkDock
-                // The client will race 0x80 vs 0x08 - we want 0x80 to win
-                log(LogLevel::Info, &format!("[Server] GET_REPORT request for SECONDARY port (0x08) IGNORED - not responding to ensure Studio detection (flags: {:?})", message.flags));
-                // Explicitly return without response
+                // SECONDARY PORT: Respond to acknowledge the request
+                // Based on TypeScript client behavior, we should respond even if Device 2 is not connected
+                // The client uses Promise.race and checks if 0x08 responds to determine secondary port
+                // After receiving 0x08 response, client queries 0x1c for actual Device 2 info
+                // 
+                // NOTE: Exact 0x08 response structure is unclear - client doesn't parse vendorId/productId from it
+                // For now, we return same structure as 0x80 to acknowledge (TODO: verify real device behavior)
+                log(LogLevel::Info, "[Server] Responding to GET_REPORT 0x08 (Secondary Port) to acknowledge request");
+                // TODO: Verify correct 0x08 response structure - client uses 0x1c for actual Device 2 info
+                let data = build_primary_port_info_payload(0x0fd9, 0x00aa);
+                send_get_report_response(writer, message.message_id, report_id, data).await?;
+                return Ok(());
+            }
+            0x1a => {
+                // Report ID 0x1a: Keep-alive related, should NOT come as GET_REPORT
+                // If it does, it's likely a keep-alive ACK that was misidentified
+                // Don't respond as GET_REPORT - it's already handled as keep-alive ACK above
+                log(LogLevel::Warn, &format!(
+                    "[Server] GET_REPORT 0x1a received (unexpected - should be keep-alive ACK). Ignoring as GET_REPORT."
+                ));
                 return Ok(());
             }
             _ => {
                 // Other report IDs - handle normally
                 if let Some(data) = get_report_data(state, report_id).await {
-                    // Log response for other important Report IDs
-                    if report_id == 0x83 || report_id == 0x84 || report_id == 0x1c {
-                        log(LogLevel::Debug, &format!("[Server] GET_REPORT response for 0x{:02x}", report_id));
+                    // Check if data is empty (which indicates unsupported or optional feature)
+                    if data.is_empty() {
+                        log(LogLevel::Info, &format!("[Server] GET_REPORT 0x{:02x} - returning empty response (optional/unsupported)", report_id));
+                        // Still send response with empty data to acknowledge the request
+                        send_get_report_response(writer, message.message_id, report_id, data).await?;
+                    } else {
+                        log(LogLevel::Info, &format!("[Server] Responding to GET_REPORT 0x{:02x}", report_id));
+                        send_get_report_response(writer, message.message_id, report_id, data).await?;
                     }
-                    // Use throttled logger for other GET_REPORT requests (can be very frequent)
-                    throttled_logger.log(LogLevel::Debug, &format!("[Server] GET_REPORT request (Report ID: 0x{:02x})", report_id));
-                    send_get_report_response(writer, message.message_id, report_id, data).await?;
+                    return Ok(());
+                } else {
+                    log(LogLevel::Warn, &format!("[Server] GET_REPORT 0x{:02x} - no data available, request ignored", report_id));
+                    // Don't send response for unsupported report IDs to avoid confusing the client
+                    // Just return Ok() without response
                     return Ok(());
                 }
             }
@@ -961,17 +1249,24 @@ async fn handle_message(
                     (0x03, 0x08) if message.payload.len() >= 3 => {
                         let brightness = message.payload[2];
                         state.write().await.brightness = brightness;
+                        log(LogLevel::Info, &format!("[Server] SEND_REPORT: Set brightness to {}%", brightness));
                     }
 
                     // Reset (0x03 0x02)
                     (0x03, 0x02) => {
                         *state.write().await = DeviceState::default();
+                        log(LogLevel::Info, "[Server] SEND_REPORT: Reset device");
                     }
 
                     _ => {
-                        // Unknown SEND_REPORT command - silently ignore
+                        // Unknown SEND_REPORT command
+                        log(LogLevel::Info, &format!("[Server] SEND_REPORT: Unknown command 0x{:02x} 0x{:02x}", 
+                            message.payload[0],
+                            if message.payload.len() > 1 { message.payload[1] } else { 0 }));
                     }
                 }
+            } else {
+                log(LogLevel::Info, &format!("[Server] SEND_REPORT: Payload too short (len={})", message.payload.len()));
             }
         }
 
@@ -1024,12 +1319,19 @@ async fn handle_message(
                     // Display area image (0x02 0x0c)
                     (0x02, 0x0c) if message.payload.len() >= 16 => {
                         // Display area image data processed
+                        // Log only occasionally to avoid spam
+                        throttled_logger.log(LogLevel::Debug, "[Server] WRITE: Display area image data");
                     }
 
                     _ => {
-                        // Unknown command - silently ignore
+                        // Unknown WRITE command
+                        log(LogLevel::Info, &format!("[Server] WRITE: Unknown command 0x{:02x} 0x{:02x}", 
+                            message.payload[0],
+                            if message.payload.len() > 1 { message.payload[1] } else { 0 }));
                     }
                 }
+            } else {
+                log(LogLevel::Info, &format!("[Server] WRITE: Payload too short (len={})", message.payload.len()));
             }
         }
     }
@@ -1148,14 +1450,19 @@ fn print_help() {
 async fn execute_command(
     command: Command,
     clients: &Arc<Mutex<Vec<ClientConnection>>>,
+    state: &Arc<RwLock<DeviceState>>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     match command {
         Command::ButtonPress(index) => {
+            // Update button state in DeviceState
+            state.write().await.button_states[index as usize] = true;
             broadcast_button_event(clients, index, true).await?;
             log(LogLevel::Info, &format!("[Command] Button {} pressed", index));
             Ok(false)
         }
         Command::ButtonRelease(index) => {
+            // Update button state in DeviceState
+            state.write().await.button_states[index as usize] = false;
             broadcast_button_event(clients, index, false).await?;
             log(LogLevel::Info, &format!("[Command] Button {} released", index));
             Ok(false)
@@ -1230,7 +1537,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         log(LogLevel::Info, &format!("[Device] Vendor ID: 0x0fd9 (Elgato Systems GmbH)"));
         log(LogLevel::Info, &format!("[Device] Product ID: 0x00aa (Stream Deck Studio)"));
         log(LogLevel::Info, &format!("[Device] Device Type: Studio (Primary Port, Report ID 0x80)"));
-        log(LogLevel::Info, &format!("[Device] Note: Report ID 0x08 will NOT be responded to ensure Studio detection"));
     }
     let clients: Arc<Mutex<Vec<ClientConnection>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -1243,6 +1549,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle standard input commands
     let clients_stdin = clients.clone();
+    let state_stdin = state.clone();
     tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin);
@@ -1263,7 +1570,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match parse_command(trimmed) {
                         Ok(cmd) => {
-                            if let Ok(should_quit) = execute_command(cmd, &clients_stdin).await {
+                            if let Ok(should_quit) = execute_command(cmd, &clients_stdin, &state_stdin).await {
                                 if should_quit {
                                     std::process::exit(0);
                                 }
