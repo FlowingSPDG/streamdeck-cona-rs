@@ -3,7 +3,7 @@
 use crate::connection::TcpConnection;
 use crate::error::{Error, Result};
 use crate::image::ImageConverter;
-use streamdeck_cona_rs_core::{Command, CommandEncoder, Event, EventDecoder};
+use streamdeck_cona_rs_core::{Command, CommandEncoder, Event, EventDecoder, PACKET_SIZE};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
@@ -15,6 +15,25 @@ pub struct Device {
 }
 
 impl Device {
+    /// Helper function to extract payload from a command packet and send as Cora message
+    async fn send_command_packet(&self, packet: &[u8; PACKET_SIZE]) -> Result<()> {
+        // Extract payload from packet (skip leading 0x00 padding)
+        let payload_start = packet.iter().position(|&x| x != 0x00)
+            .unwrap_or(0);
+        let payload_end = packet.iter().rposition(|&x| x != 0x00)
+            .map(|i| i + 1)
+            .unwrap_or(payload_start.max(32));
+
+        let payload = if payload_start < payload_end {
+            packet[payload_start..payload_end].to_vec()
+        } else {
+            // If all zeros, use first 32 bytes as payload (minimum size)
+            packet[..32.min(PACKET_SIZE)].to_vec()
+        };
+
+        self.connection.read().await.send_command_payload(payload).await
+    }
+
     /// Connect to a Stream Deck Studio device via TCP
     ///
     /// # Arguments
@@ -62,7 +81,7 @@ impl Device {
 
         let command = Command::SetBrightness(brightness);
         let packet = CommandEncoder::encode(&command)?;
-        self.connection.read().await.send_packet(&packet).await?;
+        self.send_command_packet(&packet).await?;
         Ok(())
     }
 
@@ -109,7 +128,7 @@ impl Device {
                 data: chunk.to_vec(),
             };
             let packet = CommandEncoder::encode(&command)?;
-            self.connection.read().await.send_packet(&packet).await?;
+            self.send_command_packet(&packet).await?;
         }
 
         Ok(())
@@ -149,7 +168,7 @@ impl Device {
                 data: chunk.to_vec(),
             };
             let packet = CommandEncoder::encode(&command)?;
-            self.connection.read().await.send_packet(&packet).await?;
+            self.send_command_packet(&packet).await?;
         }
 
         Ok(())
@@ -183,7 +202,7 @@ impl Device {
             b,
         };
         let packet = CommandEncoder::encode(&command)?;
-        self.connection.read().await.send_packet(&packet).await?;
+        self.send_command_packet(&packet).await?;
         Ok(())
     }
 
@@ -216,7 +235,7 @@ impl Device {
             colors,
         };
         let packet = CommandEncoder::encode(&command)?;
-        self.connection.read().await.send_packet(&packet).await?;
+        self.send_command_packet(&packet).await?;
         Ok(())
     }
 
@@ -224,7 +243,7 @@ impl Device {
     pub async fn reset(&self) -> Result<()> {
         let command = Command::Reset;
         let packet = CommandEncoder::encode(&command)?;
-        self.connection.read().await.send_packet(&packet).await?;
+        self.send_command_packet(&packet).await?;
         Ok(())
     }
 
@@ -248,13 +267,8 @@ impl Device {
                             continue;
                         }
 
-                        // Convert Cora message to Legacy packet format for event decoder
-                        let mut packet = [0u8; 1024];
-                        let len = message.payload.len().min(1024);
-                        packet[..len].copy_from_slice(&message.payload[..len]);
-
-                        // Decode event
-                        match EventDecoder::decode(&packet) {
+                        // Decode event from Cora message payload
+                        match EventDecoder::decode(&message.payload) {
                             Ok(Some(event)) => {
                                 if let Err(_) = tx.send(event) {
                                     // Receiver dropped, exit loop

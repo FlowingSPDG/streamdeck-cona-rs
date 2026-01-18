@@ -1,13 +1,12 @@
 //! TCP connection management with Cora protocol support
 
 use crate::error::{Error, Result};
-use streamdeck_cona_rs_core::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, PACKET_SIZE};
+use streamdeck_cona_rs_core::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tokio::time::timeout;
 
 /// Timeout for keep-alive responses (5 seconds as per protocol)
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -149,6 +148,33 @@ impl TcpConnection {
         Ok(())
     }
 
+    /// Send command payload as Cora message (automatically determines HID operation and generates message ID)
+    pub async fn send_command_payload(&self, payload: Vec<u8>) -> Result<()> {
+        let message_id = {
+            let mut id = self.next_message_id.write().await;
+            *id += 1;
+            *id
+        };
+
+        // Determine HID operation based on payload
+        let hid_op = if payload.len() >= 2 && payload[0] == 0x03 {
+            // Feature report (0x03 prefix)
+            CoraHidOp::SendReport
+        } else {
+            // HID write for images and other data
+            CoraHidOp::Write
+        };
+
+        let message = CoraMessage::new(
+            CoraMessageFlags::None,
+            hid_op,
+            message_id,
+            payload,
+        );
+
+        self.send_cora_message(&message).await
+    }
+
     /// Read a Cora protocol message
     pub async fn read_cora_message(&self) -> Result<CoraMessage> {
         let mut stream = self.stream.write().await;
@@ -212,85 +238,6 @@ impl TcpConnection {
         Ok(message)
     }
 
-    /// Send a packet (converts Legacy packet format to Cora message for compatibility)
-    pub async fn send_packet(&self, packet: &[u8; PACKET_SIZE]) -> Result<()> {
-        // Extract command from Legacy packet format
-        // Payload is the command data (skip leading 0x00 padding)
-        let payload_start = packet.iter().position(|&x| x != 0x00)
-            .unwrap_or(0);
-        let payload_end = packet.iter().rposition(|&x| x != 0x00)
-            .map(|i| i + 1)
-            .unwrap_or(payload_start.max(32));
-
-        let payload = if payload_start < payload_end {
-            packet[payload_start..payload_end].to_vec()
-        } else {
-            // If all zeros, use first 32 bytes as payload (minimum size)
-            packet[..32.min(PACKET_SIZE)].to_vec()
-        };
-
-        let message_id = {
-            let mut id = self.next_message_id.write().await;
-            *id += 1;
-            *id
-        };
-
-        // Determine HID operation based on payload
-        let hid_op = if payload.len() >= 2 && payload[0] == 0x03 {
-            // Feature report (0x03 prefix)
-            CoraHidOp::SendReport
-        } else {
-            // HID write for images and other data
-            CoraHidOp::Write
-        };
-
-        let message = CoraMessage::new(
-            CoraMessageFlags::None,
-            hid_op,
-            message_id,
-            payload,
-        );
-
-        self.send_cora_message(&message).await
-    }
-
-    /// Read a packet (converts Cora message to Legacy packet format for compatibility)
-    pub async fn read_packet(&self) -> Result<[u8; PACKET_SIZE]> {
-        let message = self.read_cora_message().await?;
-
-        // Convert Cora message to Legacy packet format
-        let mut packet = [0u8; PACKET_SIZE];
-
-        // If it's a response to GET_REPORT, use the payload directly
-        if message.hid_op == CoraHidOp::GetReport
-            && (message.flags == CoraMessageFlags::Result || message.flags == CoraMessageFlags::None)
-        {
-            let len = message.payload.len().min(PACKET_SIZE);
-            packet[..len].copy_from_slice(&message.payload[..len]);
-        } else if message.hid_op == CoraHidOp::Write || message.hid_op == CoraHidOp::SendReport {
-            // For write/send operations, use payload directly
-            let len = message.payload.len().min(PACKET_SIZE);
-            packet[..len].copy_from_slice(&message.payload[..len]);
-        } else {
-            // For other messages, format payload
-            let len = message.payload.len().min(PACKET_SIZE);
-            if len > 0 {
-                packet[..len].copy_from_slice(&message.payload);
-            }
-        }
-
-        Ok(packet)
-    }
-
-    /// Read a packet with timeout
-    pub async fn read_packet_timeout(
-        &self,
-        duration: Duration,
-    ) -> Result<[u8; PACKET_SIZE]> {
-        timeout(duration, self.read_packet())
-            .await
-            .map_err(|_| Error::Timeout(format!("No data received within {:?}", duration)))?
-    }
 
     /// Handle keep-alive packet from device
     pub async fn handle_keep_alive(&self) -> Result<()> {

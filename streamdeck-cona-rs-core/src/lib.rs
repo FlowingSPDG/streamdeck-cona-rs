@@ -35,7 +35,7 @@ pub mod event;
 pub mod packet;
 
 pub use command::{Command, CommandEncoder};
-pub use cora::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, CORA_HEADER_SIZE, is_cora_magic, is_legacy_keep_alive};
+pub use cora::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC, CORA_HEADER_SIZE, is_cora_magic, is_keep_alive_payload};
 pub use error::{Error, Result};
 pub use event::{Event, EventDecoder, TouchType};
 pub use packet::{PACKET_SIZE, PacketReader, PacketWriter};

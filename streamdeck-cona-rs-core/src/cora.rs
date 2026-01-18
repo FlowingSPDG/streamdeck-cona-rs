@@ -178,7 +178,10 @@ pub fn is_cora_magic(buffer: &[u8]) -> bool {
     buffer.len() >= 4 && buffer[0..4] == CORA_MAGIC
 }
 
-/// Check if buffer starts with Legacy keep-alive packet
-pub fn is_legacy_keep_alive(buffer: &[u8]) -> bool {
+/// Check if buffer starts with keep-alive payload format (Cora protocol)
+/// 
+/// This checks for the keep-alive payload format `[0x01, 0x0a, ...]` which is used
+/// within Cora protocol messages, not a separate Legacy protocol.
+pub fn is_keep_alive_payload(buffer: &[u8]) -> bool {
     buffer.len() >= 2 && buffer[0] == 0x01 && buffer[1] == 0x0a
 }

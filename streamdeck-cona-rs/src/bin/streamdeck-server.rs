@@ -426,7 +426,7 @@ async fn broadcast_touch_event(
 
 /// Send keep-alive packet to client
 /// Per PROTOCOL.md: payload is [0x01, 0x0a, ...] with connection_no at index 5
-/// Fixed-length packets: pad to 1024 bytes (same as client sends ACK in fixed-length format)
+/// Cora protocol uses variable-length payloads (not fixed 1024 bytes)
 async fn send_keep_alive(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     next_message_id: &Arc<Mutex<u32>>,
@@ -435,9 +435,10 @@ async fn send_keep_alive(
     let mut msg_id = next_message_id.lock().await;
     let conn_no = *connection_no.lock().await;
     
-    // Fixed-length packet (1024 bytes) with padding, matching client's fixed-length ACK format
+    // Keep-alive payload: [0x01, 0x0a, ...] with connection_no at index 5
+    // 32 bytes is sufficient for keep-alive (Cora protocol uses variable-length payloads)
     let keep_alive_payload = {
-        let mut payload = vec![0u8; 1024];  // Fixed-length: pad to 1024 bytes
+        let mut payload = vec![0u8; 32];
         payload[0] = 0x01;
         payload[1] = 0x0a;
         payload[5] = conn_no;  // Connection number at index 5 (per PROTOCOL.md)
@@ -597,7 +598,7 @@ async fn handle_client(
             }
 
             // Read payload length from header (Little Endian - confirmed)
-            // Client sends fixed-length packets (1024 bytes) with padding for short commands
+            // Cora protocol uses variable-length payloads
             let payload_length = u32::from_le_bytes([
                 receive_buffer[12], receive_buffer[13], receive_buffer[14], receive_buffer[15]
             ]) as usize;
@@ -609,24 +610,16 @@ async fn handle_client(
                 receive_buffer.len(), CORA_HEADER_SIZE + payload_length
             ));
 
-            // Check if we have full message (wait for complete packet including padding)
-            // Short packets are padded to fixed length (1024 bytes) with 0x00
+            // Check if we have full message (Cora protocol uses variable-length payloads)
             if receive_buffer.len() < CORA_HEADER_SIZE + payload_length {
                 break;
             }
 
             let message_bytes = &receive_buffer[..CORA_HEADER_SIZE + payload_length];
 
-            // Decode message (fixed-length packets with padding for short commands)
+            // Decode Cora message (variable-length payload)
             match CoraMessage::decode(message_bytes) {
                 Ok(message) => {
-                    // Find actual meaningful payload length (data before padding)
-                    // Padding is 0x00, so find last non-zero byte
-                    let actual_payload_len = message.payload.iter()
-                        .rposition(|&b| b != 0)
-                        .map(|pos| pos + 1)
-                        .unwrap_or(0);
-                    
                     // Log received message details
                     let payload_preview = if message.payload.len() <= 16 {
                         format!("{:02x?}", message.payload)
@@ -645,17 +638,9 @@ async fn handle_client(
                     ]);
                     
                     log(LogLevel::Info, &format!(
-                        "[Server] Decoded message: hid_op={:?}, flags={:?} (raw: 0x{:04x}, bytes: {}), msg_id={}, payload_len={} (with padding), actual_data_len={}, payload={}", 
-                        message.hid_op, message.flags, raw_flags_value, raw_flags_bytes, message.message_id, message.payload.len(), actual_payload_len, payload_preview
+                        "[Server] Decoded message: hid_op={:?}, flags={:?} (raw: 0x{:04x}, bytes: {}), msg_id={}, payload_len={}, payload={}", 
+                        message.hid_op, message.flags, raw_flags_value, raw_flags_bytes, message.message_id, message.payload.len(), payload_preview
                     ));
-                    
-                    // Log padding info at debug level (expected behavior)
-                    if actual_payload_len > 0 && actual_payload_len < message.payload.len() && actual_payload_len < 64 {
-                        log(LogLevel::Debug, &format!(
-                            "[Server] Fixed-length packet with padding: data_len={}, padded_len={} (expected for short commands)",
-                            actual_payload_len, message.payload.len()
-                        ));
-                    }
 
                     // Remove processed message from buffer
                     receive_buffer.drain(..CORA_HEADER_SIZE + payload_length);
@@ -1102,7 +1087,7 @@ async fn handle_message(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Handle keep-alive ACK (0x03 0x1a)
     // Per PROTOCOL.md: ACK response has flags=ACK_NAK (0x0200) and payload=[0x03, 0x1a, connection_no, ...] (32 bytes)
-    // Fixed-length packets: payload is always 1024 bytes with padding, but keep-alive ACK has connection_no at index 2
+    // Cora protocol uses variable-length payloads (not fixed 1024 bytes)
     // Connection_no can be 0, which is valid data (not padding)
     // This is the most frequently sent message (every 4 seconds) - critical for connection stability
     if message.payload.len() >= 3 && message.payload[0] == 0x03 && message.payload[1] == 0x1a {

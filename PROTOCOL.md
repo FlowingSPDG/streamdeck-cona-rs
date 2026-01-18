@@ -58,13 +58,22 @@ USB HID実装の詳細については以下を参照：
 
 ### フラグ
 
-| フラグ | 値 |
-|--------|-----|
-| VERBATIM | `0x8000` |
-| REQ_ACK | `0x4000` |
-| ACK_NAK | `0x0200` |
-| RESULT | `0x0100` |
-| NONE | `0x0000` |
+| フラグ | 値 | 説明 |
+|--------|-----|------|
+| VERBATIM | `0x8000` | セカンダリポート（子デバイス）への通信を示す。このフラグが設定されている場合、ペイロードは`[reportId]`の形式で、`0x03`プレフィックスなしで送信される |
+| REQ_ACK | `0x4000` | ホストがACKを要求する |
+| ACK_NAK | `0x0200` | デバイスからのACK/NAKレスポンス |
+| RESULT | `0x0100` | GET_REPORT操作に対するレスポンスを示す |
+| NONE | `0x0000` | フラグなし |
+
+#### VERBATIMフラグの詳細
+
+Coraプロトコルは、Primary（メイン）ポートとSecondary（子デバイス）ポートの2つのポートをサポートしています：
+
+- **Primaryポート**: フラグ `NONE (0x0000)`, ペイロード `[0x03, reportId]` の形式
+- **Secondaryポート**: フラグ `VERBATIM (0x8000)`, ペイロード `[reportId]` の形式（`0x03`プレフィックスなし）
+
+この違いにより、同じTCP接続で複数のデバイス（例：NetworkDockに接続されたStream Deck Module）を管理できます。
 
 ### HID オペレーション
 
@@ -182,3 +191,60 @@ ACK レスポンス（クライアント → デバイス）:
 
 レスポンス: ペイロード `[0x03, 0x84, length_high, length_low, ...serial_string...]`
 - 長さフィールドはBig Endian（他のフィールドは通常Little Endian）
+
+---
+
+## Studio vs NetworkDock
+
+Stream Deck StudioとNetworkDockは、Coraプロトコルを使用する点では同一ですが、以下の違いがあります：
+
+### 接続方式
+
+- **Stream Deck Studio**:
+  - USB HIDとTCP（Cora）の両方をサポート
+  - USB接続時はUSB HIDプロトコルを使用（FeatureReport: `0x05`, `0x11`, `0x13`など）
+  - TCP接続時はCoraプロトコルを使用（本ドキュメントのプロトコル）
+
+- **NetworkDock**:
+  - TCP（Cora）のみをサポート
+  - USB接続は不可
+
+### ProductID
+
+- **Stream Deck Studio**: `0x00aa`
+- **NetworkDock**: `0xffff`（実際のハードウェアProductIDではなく、デバイス情報クエリ時の返り値として使用される特殊な値）
+
+### ハードウェア構成
+
+- **Stream Deck Studio**:
+  - 32個のボタン（16x2グリッド）
+  - 2個のエンコーダー（各24段のLEDリング付き）
+  - NFCリーダー
+  - 2つのフルスクリーンパネル（LCD）
+
+- **NetworkDock**:
+  - 物理的なコントロールなし（`CONTROLS`が空）
+  - 子デバイス（Stream Deck Module: 6-key, 15-key, 32-key）を接続可能
+  - `SUPPORTS_CHILD_DEVICES: true`
+
+### ファームウェア情報取得
+
+ファームウェアバージョンの取得方法が異なります：
+
+- **Stream Deck Studio (USB)**:
+  - `0x05`: AP2ファームウェア
+  - `0x11`: Encoder AP2ファームウェア
+  - `0x13`: Encoder LDファームウェア
+
+- **Stream Deck Studio (TCP)** / **NetworkDock (TCP)**:
+  - `0x83`: AP2ファームウェアのみ
+
+### プロトコルの互換性
+
+内部のTCPプロトコル（Cora）自体は同一です。主な違いは：
+
+1. **接続方法**: StudioはUSB/TCP両対応、NetworkDockはTCP専用
+2. **デバイス構成**: Studioは物理コントロールあり、NetworkDockは子デバイス経由
+3. **FeatureReport ID**: USB接続時のStudioとTCP接続時の違い（上記参照）
+
+このため、同じCoraプロトコル実装で両方のデバイスをサポートできます。
