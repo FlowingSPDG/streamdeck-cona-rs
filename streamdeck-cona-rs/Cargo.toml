@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust library for controlling Elgato Stream Deck Studio via TCP protocol"
-readme = "../README.md"
+readme = "README.md"
 keywords = ["streamdeck", "elgato", "tcp", "async", "tokio"]
 categories = ["hardware-support", "network-programming", "asynchronous"]
 
@@ -20,10 +20,10 @@ image = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 log = { workspace = true }
+env_logger = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
-env_logger = { workspace = true }
 
 [lib]
 name = "streamdeck_cona_rs"
@@ -33,22 +33,18 @@ path = "src/lib.rs"
 name = "simple_client"
 path = "examples/simple_client.rs"
 
-[[example]]
-name = "image_display"
-path = "examples/image_display.rs"
+[[bin]]
+name = "streamdeck-server"
+path = "src/bin/streamdeck-server.rs"
 
-[[example]]
-name = "event_handler"
-path = "examples/event_handler.rs"
+[[bin]]
+name = "networkdock-server"
+path = "src/bin/networkdock-server.rs"
 
-[[example]]
-name = "streamdeck_client"
-path = "examples/streamdeck_client.rs"
+[[bin]]
+name = "streamdeck-manager"
+path = "src/bin/streamdeck-manager.rs"
 
-[[example]]
-name = "streamdeck_server"
-path = "examples/streamdeck_server.rs"
-
-[[example]]
-name = "networkdock_server"
-path = "examples/networkdock_server.rs"
+[[bin]]
+name = "streamdeck-client"
+path = "src/bin/streamdeck-client.rs"

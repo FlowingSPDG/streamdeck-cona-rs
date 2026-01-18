@@ -3,83 +3,50 @@
 [![crates.io](https://img.shields.io/crates/v/streamdeck-cona-rs.svg)](https://crates.io/crates/streamdeck-cona-rs)
 [![docs.rs](https://docs.rs/streamdeck-cona-rs/badge.svg)](https://docs.rs/streamdeck-cona-rs)
 
-Rust library for communicating with Elgato Stream Deck Studio devices via TCP/IP protocol using the **Cora protocol**.
+Rust library for controlling Elgato Stream Deck Studio devices via TCP using the Cora protocol.
 
-## Overview
+## Workspace
 
-This library provides a Rust implementation for controlling Elgato Stream Deck Studio devices over the network using the **Cora protocol**. The Cora protocol is a modern TCP/IP protocol that uses a 16-byte header with variable-length payloads over TCP port 5343.
+This repository contains:
 
-## Features
-
-- ✅ TCP connection management
-- ✅ Brightness control
-- ✅ Event handling (button, encoder, touch, NFC)
-- ✅ Keep-alive management
-- 🚧 Device discovery (not ready yet)
-- 🚧 no-std support for embedded development
+- **`streamdeck-cona-rs-core`**: no-std compatible protocol parsing/encoding
+- **`streamdeck-cona-rs`**: Full async TCP library with binaries
 
 
-## Usage
+See each crate's README for usage:
 
-Add this to your `Cargo.toml`:
+- [streamdeck-cona-rs](streamdeck-cona-rs/README.md) - Main library
+- [streamdeck-cona-rs-core](streamdeck-cona-rs-core/README.md) - Core protocol library
 
-```toml
-[dependencies]
-streamdeck-cona-rs = "0.1.0"
-tokio = { version = "1", features = ["full"] }
-```
+## Binaries
 
-## Example
+This workspace provides several command-line tools:
 
-See `examples/simple_client.rs` for a complete example:
+- **`streamdeck-server`**: Emulator server for Stream Deck Studio (single instance)
+- **`networkdock-server`**: Emulator server for Stream Deck NetworkDock (single instance)
+- **`streamdeck-manager`**: CUI manager for creating and controlling multiple virtual Stream Deck Studio instances
+- **`streamdeck-client`**: Command-line client for controlling Stream Deck devices
 
-```rust
-use streamdeck_cona_rs::Device;
+### Running Binaries
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Connect to Stream Deck Studio
-    let device = Device::connect_tcp("192.168.1.100:5343").await?;
-    
-    // Get and print serial number
-    if let Some(serial) = device.serial_number().await {
-        println!("Connected to device with serial: {}", serial);
-    }
-    
-    // Set brightness to 80%
-    device.set_brightness(80).await?;
-    
-    // Set button image
-    let image_data = include_bytes!("image.jpg");
-    device.set_button_image(5, image_data.to_vec()).await?;
-    
-    Ok(())
-}
+From workspace root:
+
+```bash
+# Run streamdeck-manager
+cargo run -p streamdeck-cona-rs --bin streamdeck-manager
+
+# Run other binaries
+cargo run -p streamdeck-cona-rs --bin streamdeck-server
+cargo run -p streamdeck-cona-rs --bin networkdock-server
+cargo run -p streamdeck-cona-rs --bin streamdeck-client
+
+# Run examples
+cargo run -p streamdeck-cona-rs --example simple_client
 ```
 
 ## Protocol
 
-This library implements the **Cora protocol** for Stream Deck Studio/Plus as documented in `StreamDeck-Studio-Plus-TCP-Protocol.md`.
-
-Previously, there was a Legacy protocol, but this library supports only the modern Cora protocol.
-
-Key characteristics:
-- Port: 5343 (default)
-- Protocol: Cora (16-byte header + variable payload)
-- Magic bytes: `[0x43, 0x93, 0x8a, 0x41]`
-- Keep-alive: 5 second timeout
-
-## Crates
-
-This workspace contains two crates:
-
-- **`streamdeck-cona-rs-core`**: no-std compatible core library for protocol parsing/encoding
-- **`streamdeck-cona-rs`**: Full-featured async TCP library (depends on core)
-
-## Useful Links
-
-- [SKAARHOJ Wiki - Stream Deck on Raw Panel](https://wiki.skaarhoj.com/books/raw-panel/page/stream-deck-on-raw-panel) - Comprehensive documentation about Stream Deck Studio protocol and usage
-- [YouTube Video](https://www.youtube.com/watch?v=lrTc9Ogmh8s) - Video demonstration of Stream Deck integration
+Cora protocol on TCP port 5343. See [PROTOCOL.md](PROTOCOL.md) for details.
 
 ## License
 

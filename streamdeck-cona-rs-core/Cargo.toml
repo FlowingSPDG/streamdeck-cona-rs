@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "no-std compatible core library for Stream Deck Studio TCP protocol"
-readme = "../README.md"
+readme = "README.md"
 keywords = ["streamdeck", "elgato", "tcp", "no-std", "embedded"]
 categories = ["embedded", "hardware-support", "no-std"]
 

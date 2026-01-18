@@ -1,7 +1,9 @@
 //! Interactive CUI client for Stream Deck Studio
 //!
-//! This example provides an interactive command-line interface for controlling
+//! This is a CUI tool that provides an interactive command-line interface for controlling
 //! a Stream Deck Studio device over TCP.
+//!
+//! Usage: streamdeck-client [IP:PORT]
 
 use streamdeck_cona_rs::Device;
 use std::io::{self, Write};

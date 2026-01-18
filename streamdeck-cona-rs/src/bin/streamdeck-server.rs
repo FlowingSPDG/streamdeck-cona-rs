@@ -1,7 +1,9 @@
 //! Stream Deck Studio Server Emulator (Cora Protocol)
 //!
-//! This example implements a TCP server that emulates a Stream Deck Studio device.
+//! This is a CUI tool that implements a TCP server that emulates a Stream Deck Studio device.
 //! It uses the Cora protocol for communication.
+//!
+//! Usage: streamdeck-server [PORT]
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
