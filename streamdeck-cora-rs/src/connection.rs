@@ -1,7 +1,7 @@
 //! TCP connection management with Cora protocol support
 
 use crate::error::{Error, Result};
-use streamdeck_cona_rs_core::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC};
+use streamdeck_cora_rs_core::{CoraMessage, CoraMessageFlags, CoraHidOp, CORA_MAGIC};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

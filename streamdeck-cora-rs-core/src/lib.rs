@@ -11,7 +11,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! use streamdeck_cona_rs_core::{Command, CommandEncoder, Event, EventDecoder};
+//! use streamdeck_cora_rs_core::{Command, CommandEncoder, Event, EventDecoder};
 //!
 //! // Encode a command
 //! let command = Command::SetBrightness(80);

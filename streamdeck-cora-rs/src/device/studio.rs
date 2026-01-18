@@ -3,7 +3,7 @@
 use crate::connection::TcpConnection;
 use crate::error::{Error, Result};
 use crate::image::ImageConverter;
-use streamdeck_cona_rs_core::{Command, CommandEncoder, Event, EventDecoder, PACKET_SIZE};
+use streamdeck_cora_rs_core::{Command, CommandEncoder, Event, EventDecoder, PACKET_SIZE};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
@@ -41,7 +41,7 @@ impl Device {
     ///
     /// # Example
     /// ```no_run
-    /// use streamdeck_cona_rs::Device;
+    /// use streamdeck_cora_rs::Device;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let device = Device::connect_tcp("192.168.1.100:5343").await?;
@@ -93,7 +93,7 @@ impl Device {
     ///
     /// # Example
     /// ```no_run
-    /// # use streamdeck_cona_rs::Device;
+    /// # use streamdeck_cora_rs::Device;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let device = Device::connect_tcp("192.168.1.100:5343").await?;
     /// let image_data = include_bytes!("button.jpg");

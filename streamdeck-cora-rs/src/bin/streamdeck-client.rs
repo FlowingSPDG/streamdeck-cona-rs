@@ -5,7 +5,7 @@
 //!
 //! Usage: streamdeck-client [IP:PORT]
 
-use streamdeck_cona_rs::Device;
+use streamdeck_cora_rs::Device;
 use std::io::{self, Write};
 use tokio::io::{AsyncBufReadExt, BufReader};
 

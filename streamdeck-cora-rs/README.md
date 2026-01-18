@@ -1,4 +1,4 @@
-# streamdeck-cona-rs
+# streamdeck-cora-rs
 
 Rust library for controlling Elgato Stream Deck Studio via TCP protocol using the Cora protocol.
 
@@ -6,12 +6,12 @@ Rust library for controlling Elgato Stream Deck Studio via TCP protocol using th
 
 ```toml
 [dependencies]
-streamdeck-cona-rs = "0.1.0"
+streamdeck-cora-rs = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
 ```rust
-use streamdeck_cona_rs::Device;
+use streamdeck_cora_rs::Device;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Run from workspace root:
 ```bash
-cargo run -p streamdeck-cona-rs --bin streamdeck-manager
+cargo run -p streamdeck-cora-rs --bin streamdeck-manager
 ```
 
 ## License
